@@ -23,9 +23,7 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.net.UrlEscapers;
 import java.nio.charset.Charset;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import javax.servlet.http.HttpServletRequest;
 
 /**
@@ -66,39 +64,111 @@ final class ServletUtils {
 
   /** Normalizes a path by unescaping all safe, percent encoded characters. */
   static String normalizePath(String path) {
-    StringBuilder sb = new StringBuilder(path.length());
-    int queryStart = path.indexOf('?');
-    String query = null;
-    if (queryStart != -1) {
-      query = path.substring(queryStart);
-      path = path.substring(0, queryStart);
-    }
-    // Normalize the path.  we need to decode path segments, normalize and rejoin in order to
-    // 1. decode and normalize safe percent escaped characters.  e.g. %70 -> 'p'
-    // 2. decode and interpret dangerous character sequences. e.g. /%2E/ -> '/./' -> '/'
-    // 3. preserve dangerous encoded characters. e.g. '/%2F/' -> '///' -> '/%2F'
-    List<String> segments = new ArrayList<>();
-    for (String segment : SLASH_SPLITTER.split(path)) {
-      // This decodes all non-special characters from the path segment.  so if someone passes
-      // /%2E/foo we will normalize it to /./foo and then /foo
-      String normalized =
-          UrlEscapers.urlPathSegmentEscaper().escape(lenientDecode(segment, UTF_8, false));
-      if (".".equals(normalized)) {
-        // skip
-      } else if ("..".equals(normalized)) {
-        if (segments.size() > 1) {
-          segments.remove(segments.size() - 1);
-        }
-      } else {
-        segments.add(normalized);
+      StringBuilder sb = new StringBuilder(path.length());
+      int queryStart = path.indexOf('?');
+      String query = null;
+      if (queryStart != -1) {
+          query = path.substring(queryStart);
+          path = path.substring(0, queryStart);
       }
-    }
-    SLASH_JOINER.appendTo(sb, segments);
-    if (query != null) {
-      sb.append(query);
-    }
-    return sb.toString();
+      final int pathLength = path.length();
+
+      // Leading . and .. remove self and following slash
+      // Trailing or central . removes self and slash before this segment
+      // Trailing or central .. removes self and slash before this segment if there was only 1 segment before
+      // Trailing or central .. removes self and previous segment if there were > 1 segments before
+
+      int pathIndex = skipLeadingDotSegments(path, sb);
+      boolean wholePathProcessed = pathIndex == pathLength;
+
+      if (!wholePathProcessed) {
+          int processedSegments = 1;
+          while (pathIndex < pathLength) {
+              if (pathIndex == pathLength - 1) {
+                  sb.append('/');
+                  break;
+              }
+              final int nextSlashIndex = path.indexOf('/', pathIndex + 1);
+              final String segment;
+              if (nextSlashIndex == -1) {
+                  segment = path.substring(pathIndex + 1);
+              } else {
+                  segment = path.substring(pathIndex + 1, nextSlashIndex);
+              }
+              final String escapedSegment =
+                  UrlEscapers.urlPathSegmentEscaper().escape(lenientDecode(segment, UTF_8, false));
+              if (".".equals(escapedSegment)) {
+                  // skip
+              } else if ("..".equals(escapedSegment)) {
+                  // if there is more than 1 leading segment remove current segment and previous one
+                  if (processedSegments > 1) {
+                      for (int j = sb.length() - 1; j >= 0; j--) {
+                          if (sb.charAt(j) == '/') {
+                              sb.setLength(j);
+                              break;
+                          }
+                      }
+                      processedSegments--;
+                  }
+              } else {
+                  sb.append('/');
+                  sb.append(escapedSegment);
+                  processedSegments++;
+              }
+              pathIndex = nextSlashIndex == -1 ? pathLength : nextSlashIndex;
+          }
+      }
+
+      if (query != null) {
+          sb.append(query);
+      }
+      return sb.toString();
   }
+
+    /**
+     * It removes ../ and ./ prefixes after decode and escape.
+     * @return index of slash after first segment. Builder contains first segment decoded and escaped.
+     */
+    private static int skipLeadingDotSegments(String path, StringBuilder builder) {
+        if (path.length() == 0 || path.charAt(0) == '/') {
+            return 0;
+        }
+        int startIndex = 0;
+        int index = 0;
+        while (index < path.length()) {
+            final char c = path.charAt(index);
+            if (c == '/') {
+                if (index == 0) {
+                    return 0;
+                } else {
+                    final String escapedSegment =
+                        UrlEscapers.urlPathSegmentEscaper().escape(lenientDecode(path.substring(startIndex, index),
+                            UTF_8,
+                            false));
+                    if (".".equals(escapedSegment) || "..".equals(escapedSegment)) {
+                        index++;
+                        startIndex = index;
+                    } else {
+                        builder.append(escapedSegment);
+                        return index;
+                    }
+                }
+            } else if (index == path.length() - 1) {
+                final String escapedSegment =
+                    UrlEscapers.urlPathSegmentEscaper().escape(lenientDecode(path.substring(startIndex, index + 1),
+                        UTF_8, false));
+                if (".".equals(escapedSegment) || "..".equals(escapedSegment)) {
+                    // skip
+                } else {
+                    builder.append(escapedSegment);
+                }
+                return path.length();
+            } else {
+                index++;
+            }
+        }
+        return index;
+    }
 
 
   /**

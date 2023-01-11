@@ -1,0 +1,9 @@
+FROM ubuntu:22.04
+
+RUN apt-get update \
+    && apt-get -y install gcc unzip wget default-jdk \
+    && wget https://github.com/bazelbuild/bazelisk/releases/download/v1.15.0/bazelisk-linux-amd64 \
+    && chmod +x ./bazelisk-linux-amd64 \
+    && rm -rf /var/lib/apt/lists/*
+
+CMD ["/bin/bash"]
