@@ -380,17 +380,17 @@ public class ElementsTest extends TestCase {
           }
         };
 
-    final javax.inject.Provider<Integer> intJavaxProvider =
-        new javax.inject.Provider<Integer>() {
+    final jakarta.inject.Provider<Integer> intSpecProvider =
+        new jakarta.inject.Provider<Integer>() {
           @Override
           public Integer get() {
             return 42;
           }
         };
 
-    final javax.inject.Provider<Double> doubleJavaxProvider =
-        new javax.inject.Provider<Double>() {
-          @javax.inject.Inject String string;
+    final jakarta.inject.Provider<Double> doubleSpecProvider =
+        new jakarta.inject.Provider<Double>() {
+          @jakarta.inject.Inject String string;
 
           @Override
           public Double get() {
@@ -403,8 +403,8 @@ public class ElementsTest extends TestCase {
           @Override
           protected void configure() {
             bind(String.class).toProvider(aProvider);
-            bind(Integer.class).toProvider(intJavaxProvider);
-            bind(Double.class).toProvider(doubleJavaxProvider);
+            bind(Integer.class).toProvider(intSpecProvider);
+            bind(Double.class).toProvider(doubleSpecProvider);
             bind(List.class).toProvider(ListProvider.class);
             bind(Collection.class).toProvider(Key.get(ListProvider.class));
             bind(Iterable.class).toProvider(new TypeLiteral<TProvider<List<Object>>>() {});
@@ -436,7 +436,7 @@ public class ElementsTest extends TestCase {
                 new FailingTargetVisitor<T>() {
                   @Override
                   public Void visit(ProviderInstanceBinding<? extends T> binding) {
-                    assertSame(intJavaxProvider, binding.getUserSuppliedProvider());
+                    assertSame(intSpecProvider, binding.getUserSuppliedProvider());
                     assertEquals(42, binding.getProviderInstance().get());
                     // we don't wrap this w/ dependencies if there were none.
                     assertFalse(binding.getProviderInstance() instanceof HasDependencies);
@@ -455,7 +455,7 @@ public class ElementsTest extends TestCase {
                 new FailingTargetVisitor<T>() {
                   @Override
                   public Void visit(ProviderInstanceBinding<? extends T> binding) {
-                    assertSame(doubleJavaxProvider, binding.getUserSuppliedProvider());
+                    assertSame(doubleSpecProvider, binding.getUserSuppliedProvider());
                     assertEquals(42.42, binding.getProviderInstance().get());
                     // we do wrap it with dependencies if there were some.
                     assertTrue(binding.getProviderInstance() instanceof HasDependencies);

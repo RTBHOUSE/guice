@@ -9,8 +9,6 @@ java_library(
     name = "tests",
     srcs = glob(["*.java"]),
     javacopts = ["-Xep:BetaApi:OFF"],
-    plugins = [
-    ],
     resources = [
         ":test_error_files",
     ],
@@ -19,7 +17,7 @@ java_library(
         "//third_party/java/guava/annotations",
         "//third_party/java/guava/collect",
         "//third_party/java/guava/io",
-        "//third_party/java/jsr330_inject",
+        "//third_party/java/jakarta_inject",
         "//third_party/java/junit",
         "//third_party/java/truth",
     ],

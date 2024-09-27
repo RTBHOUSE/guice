@@ -28,38 +28,58 @@ import java.lang.reflect.Method;
  */
 final class HiddenClassDefiner implements ClassDefiner {
 
-  private static final Object THE_UNSAFE;
+  private static final sun.misc.Unsafe THE_UNSAFE;
   private static final Object TRUSTED_LOOKUP_BASE;
-  private static final Object TRUSTED_LOOKUP_OFFSET;
-  private static final Method GET_OBJECT_METHOD;
+  private static final long TRUSTED_LOOKUP_OFFSET;
   private static final Object HIDDEN_CLASS_OPTIONS;
   private static final Method HIDDEN_DEFINE_METHOD;
 
+  /** True if this class err'd during initialization and should not be used. */
+  static final boolean HAS_ERROR;
+
   static {
+    sun.misc.Unsafe theUnsafe;
+    Object trustedLookupBase;
+    long trustedLookupOffset;
+    Object hiddenClassOptions;
+    Method hiddenDefineMethod;
     try {
-      Class<?> unsafeType = Class.forName("sun.misc.Unsafe");
-      Field theUnsafeField = unsafeType.getDeclaredField("theUnsafe");
-      theUnsafeField.setAccessible(true);
-      THE_UNSAFE = theUnsafeField.get(null);
+      theUnsafe = UnsafeGetter.getUnsafe();
       Field trustedLookupField = Lookup.class.getDeclaredField("IMPL_LOOKUP");
-      Method baseMethod = unsafeType.getMethod("staticFieldBase", Field.class);
-      TRUSTED_LOOKUP_BASE = baseMethod.invoke(THE_UNSAFE, trustedLookupField);
-      Method offsetMethod = unsafeType.getMethod("staticFieldOffset", Field.class);
-      TRUSTED_LOOKUP_OFFSET = offsetMethod.invoke(THE_UNSAFE, trustedLookupField);
-      GET_OBJECT_METHOD = unsafeType.getMethod("getObject", Object.class, long.class);
-      HIDDEN_CLASS_OPTIONS = classOptions("NESTMATE");
-      HIDDEN_DEFINE_METHOD =
+      trustedLookupBase = theUnsafe.staticFieldBase(trustedLookupField);
+      trustedLookupOffset = theUnsafe.staticFieldOffset(trustedLookupField);
+      hiddenClassOptions = classOptions("NESTMATE");
+      hiddenDefineMethod =
           Lookup.class.getMethod(
-              "defineHiddenClass", byte[].class, boolean.class, HIDDEN_CLASS_OPTIONS.getClass());
-    } catch (ReflectiveOperationException e) {
-      throw new ExceptionInInitializerError(e);
+              "defineHiddenClass", byte[].class, boolean.class, hiddenClassOptions.getClass());
+    } catch (Throwable e) {
+      // Allow the static initialization to complete without
+      // throwing an exception.
+      theUnsafe = null;
+      trustedLookupBase = null;
+      trustedLookupOffset = 0;
+      hiddenClassOptions = null;
+      hiddenDefineMethod = null;
     }
+
+    THE_UNSAFE = theUnsafe;
+    TRUSTED_LOOKUP_BASE = trustedLookupBase;
+    TRUSTED_LOOKUP_OFFSET = trustedLookupOffset;
+    HIDDEN_CLASS_OPTIONS = hiddenClassOptions;
+    HIDDEN_DEFINE_METHOD = hiddenDefineMethod;
+    HAS_ERROR = theUnsafe == null;
   }
 
   @Override
   public Class<?> define(Class<?> hostClass, byte[] bytecode) throws Exception {
+    if (HAS_ERROR) {
+      throw new IllegalStateException(
+          "Should not be called. An earlier error occurred during HiddenClassDefiner static"
+              + " initialization.");
+    }
+
     Lookup trustedLookup =
-        (Lookup) GET_OBJECT_METHOD.invoke(THE_UNSAFE, TRUSTED_LOOKUP_BASE, TRUSTED_LOOKUP_OFFSET);
+        (Lookup) THE_UNSAFE.getObject(TRUSTED_LOOKUP_BASE, TRUSTED_LOOKUP_OFFSET);
     Lookup definedLookup =
         (Lookup)
             HIDDEN_DEFINE_METHOD.invoke(

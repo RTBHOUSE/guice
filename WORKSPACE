@@ -16,9 +16,9 @@ load("@rules_jvm_external//:specs.bzl", "maven")
 
 http_archive(
     name = "google_bazel_common",
-    sha256 = "a8168646fbec5fe020b73ee6f2c0cd7480efb101f4d4c18d4cd703a56e4748ae",
-    strip_prefix = "bazel-common-bf8e5ef95b118d1716b0cb4982cf15b6ed1c896f",
-    urls = ["https://github.com/google/bazel-common/archive/bf8e5ef95b118d1716b0cb4982cf15b6ed1c896f.zip"],
+    sha256 = "cba2aff0fb5e64dae880c8e1ead1b8d414a12b8e924315fac1a067de78a65e81",
+    strip_prefix = "bazel-common-d59d067c04e973f3c4aa34f6628bed97d6664c3c",
+    urls = ["https://github.com/google/bazel-common/archive/d59d067c04e973f3c4aa34f6628bed97d6664c3c.zip"],
 )
 
 load("@google_bazel_common//:workspace_defs.bzl", "google_common_workspace_rules")
@@ -32,17 +32,17 @@ maven_install(
         "com.google.code.findbugs:jsr305:3.0.1",
         "com.google.dagger:dagger:2.22.1",
         "com.google.dagger:dagger-producers:2.22.1",
-        "com.google.errorprone:error_prone_annotations:2.0.18",
-        "com.google.guava:guava:31.0.1-jre",
+        "com.google.errorprone:error_prone_annotations:2.18.0",
+        "com.google.guava:guava:33.0.0-jre",
         "commons-logging:commons-logging:1.2",
-        "javax.inject:javax.inject:1",
-        "javax.persistence:javax.persistence-api:2.2",
-        "javax.servlet:servlet-api:2.5",
-        "org.apache.struts:struts2-core:2.3.37",
+        "jakarta.inject:jakarta.inject-api:2.0.1",
+        "jakarta.persistence:jakarta.persistence-api:3.0.0",
+        "jakarta.servlet:jakarta.servlet-api:5.0.0",
+        "org.apache.struts:struts2-core:2.5.31",
         "org.apache.struts.xwork:xwork-core:2.3.37",
-        "org.ow2.asm:asm:9.2",
-        "org.springframework:spring-core:5.3.14",
-        "org.springframework:spring-beans:5.3.14",
+        "org.ow2.asm:asm:9.5",
+        "org.springframework:spring-core:5.3.18",
+        "org.springframework:spring-beans:5.3.18",
         "biz.aQute.bnd:bndlib:2.4.0",
         "info.picocli:picocli:4.6.3",
         maven.artifact(
@@ -54,19 +54,25 @@ maven_install(
         maven.artifact(
             "com.google.guava",
             "guava-testlib",
-            "31.0.1-jre",
+            "33.0.0-jre",
             testonly = True,
         ),
         maven.artifact(
             "com.google.truth",
             "truth",
-            "0.45",
+            "1.4.0",
             testonly = True,
         ),
         maven.artifact(
-            "javax.inject",
-            "javax.inject-tck",
-            "1",
+            "com.google.truth.extensions",
+            "truth-java8-extension",
+            "1.4.0",
+            testonly = True,
+        ),
+        maven.artifact(
+            "jakarta.inject",
+            "jakarta.inject-tck",
+            "2.0.1",
             testonly = True,
         ),
         maven.artifact(
@@ -94,15 +100,9 @@ maven_install(
             testonly = True,
         ),
         maven.artifact(
-            "org.hibernate.javax.persistence",
-            "hibernate-jpa-2.0-api",
-            "1.0.0.Final",
-            testonly = True,
-        ),
-        maven.artifact(
             "org.hibernate",
-            "hibernate-core",
-            "5.6.3.Final",
+            "hibernate-core-jakarta",
+            "5.6.15.Final",
             testonly = True,
         ),
         maven.artifact(

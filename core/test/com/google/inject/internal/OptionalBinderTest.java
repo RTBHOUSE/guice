@@ -17,6 +17,7 @@
 package com.google.inject.internal;
 
 import static com.google.common.collect.MoreCollectors.onlyElement;
+import static com.google.common.truth.Truth.assertThat;
 import static com.google.inject.Asserts.assertContains;
 import static com.google.inject.internal.SpiUtils.assertOptionalVisitor;
 import static com.google.inject.internal.SpiUtils.instance;
@@ -77,11 +78,11 @@ public class OptionalBinderTest extends TestCase {
       new TypeLiteral<Optional<Provider<String>>>() {};
   final TypeLiteral<java.util.Optional<Provider<String>>> javaOptionalOfProviderString =
       new TypeLiteral<java.util.Optional<Provider<String>>>() {};
-  final TypeLiteral<Optional<javax.inject.Provider<String>>> optionalOfJavaxProviderString =
-      new TypeLiteral<Optional<javax.inject.Provider<String>>>() {};
-  final TypeLiteral<java.util.Optional<javax.inject.Provider<String>>>
-      javaOptionalOfJavaxProviderString =
-          new TypeLiteral<java.util.Optional<javax.inject.Provider<String>>>() {};
+  final TypeLiteral<Optional<jakarta.inject.Provider<String>>> optionalOfJakartaProviderString =
+      new TypeLiteral<Optional<jakarta.inject.Provider<String>>>() {};
+  final TypeLiteral<java.util.Optional<jakarta.inject.Provider<String>>>
+      javaOptionalOfJakartaProviderString =
+          new TypeLiteral<java.util.Optional<jakarta.inject.Provider<String>>>() {};
 
   final Key<Integer> intKey = Key.get(Integer.class);
   final TypeLiteral<Optional<Integer>> optionalOfInteger = new TypeLiteral<Optional<Integer>>() {};
@@ -91,11 +92,11 @@ public class OptionalBinderTest extends TestCase {
       new TypeLiteral<Optional<Provider<Integer>>>() {};
   final TypeLiteral<java.util.Optional<Provider<Integer>>> javaOptionalOfProviderInteger =
       new TypeLiteral<java.util.Optional<Provider<Integer>>>() {};
-  final TypeLiteral<Optional<javax.inject.Provider<Integer>>> optionalOfJavaxProviderInteger =
-      new TypeLiteral<Optional<javax.inject.Provider<Integer>>>() {};
-  final TypeLiteral<java.util.Optional<javax.inject.Provider<Integer>>>
-      javaOptionalOfJavaxProviderInteger =
-          new TypeLiteral<java.util.Optional<javax.inject.Provider<Integer>>>() {};
+  final TypeLiteral<Optional<jakarta.inject.Provider<Integer>>> optionalOfJakartaProviderInteger =
+      new TypeLiteral<Optional<jakarta.inject.Provider<Integer>>>() {};
+  final TypeLiteral<java.util.Optional<jakarta.inject.Provider<Integer>>>
+      javaOptionalOfJakartaProviderInteger =
+          new TypeLiteral<java.util.Optional<jakarta.inject.Provider<Integer>>>() {};
 
   final TypeLiteral<List<String>> listOfStrings = new TypeLiteral<List<String>>() {};
 
@@ -158,6 +159,79 @@ public class OptionalBinderTest extends TestCase {
     assertNotNull(injector);
   }
 
+  enum ExpectedValueState {
+    PRESENT,
+    EMPTY
+  }
+
+  enum ExpectedProviderState {
+    PRESENT,
+    EMPTY
+  }
+
+  private static <T> Key<T> keyFor(TypeLiteral<T> typeLiteral, Annotation maybeAnnotation) {
+    if (maybeAnnotation != null) {
+      return Key.get(typeLiteral, maybeAnnotation);
+    } else {
+      return Key.get(typeLiteral);
+    }
+  }
+
+  private void assertOptionalState(
+      Injector injector,
+      ExpectedValueState valueState,
+      ExpectedProviderState providerState,
+      String expectedValueIfPresent) {
+    assertOptionalState(
+        injector, /* annotation= */ null, valueState, providerState, expectedValueIfPresent);
+  }
+
+  private void assertOptionalState(
+      Injector injector,
+      Annotation annotation,
+      ExpectedValueState valueState,
+      ExpectedProviderState providerState,
+      String expectedValueIfPresent) {
+    boolean expectedPresent = valueState == ExpectedValueState.PRESENT;
+    Optional<String> optional = injector.getInstance(keyFor(optionalOfString, annotation));
+    assertThat(optional.isPresent()).isEqualTo(expectedPresent);
+    optional =
+        Optional.fromJavaUtil(injector.getInstance(keyFor(javaOptionalOfString, annotation)));
+    assertThat(optional.isPresent()).isEqualTo(expectedPresent);
+    if (expectedPresent) {
+      assertThat(optional.get()).isEqualTo(expectedValueIfPresent);
+    }
+
+    expectedPresent = providerState == ExpectedProviderState.PRESENT;
+    Optional<Provider<String>> optionalP =
+        injector.getInstance(keyFor(optionalOfProviderString, annotation));
+    assertThat(optionalP.isPresent()).isEqualTo(expectedPresent);
+    if (expectedPresent) {
+      assertThat(optionalP.get().get()).isEqualTo(expectedValueIfPresent);
+    }
+    optionalP =
+        Optional.fromJavaUtil(
+            injector.getInstance(keyFor(javaOptionalOfProviderString, annotation)));
+    assertThat(optionalP.isPresent()).isEqualTo(expectedPresent);
+    if (expectedPresent) {
+      assertThat(optionalP.get().get()).isEqualTo(expectedValueIfPresent);
+    }
+
+    Optional<jakarta.inject.Provider<String>> optionalJkP =
+        injector.getInstance(keyFor(optionalOfJakartaProviderString, annotation));
+    assertThat(optionalJkP.isPresent()).isEqualTo(expectedPresent);
+    if (expectedPresent) {
+      assertThat(optionalJkP.get().get()).isEqualTo(expectedValueIfPresent);
+    }
+    optionalJkP =
+        Optional.fromJavaUtil(
+            injector.getInstance(keyFor(javaOptionalOfJakartaProviderString, annotation)));
+    assertThat(optionalJkP.isPresent()).isEqualTo(expectedPresent);
+    if (expectedPresent) {
+      assertThat(optionalJkP.get().get()).isEqualTo(expectedValueIfPresent);
+    }
+  }
+
   public void testOptionalIsAbsentByDefault() throws Exception {
     Module module =
         new AbstractModule() {
@@ -166,29 +240,9 @@ public class OptionalBinderTest extends TestCase {
             OptionalBinder.newOptionalBinder(binder(), String.class);
           }
         };
-
     Injector injector = Guice.createInjector(module);
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertFalse(optional.isPresent());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertFalse(optionalP.isPresent());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertFalse(optionalJxP.isPresent());
-
+    assertOptionalState(injector, ExpectedValueState.EMPTY, ExpectedProviderState.EMPTY, null);
     assertOptionalVisitor(stringKey, setOf(module), VisitType.BOTH, 0, null, null, null);
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertFalse(optional.isPresent());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertFalse(optionalP.isPresent());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertFalse(optionalJxP.isPresent());
   }
 
   public void testUsesUserBoundValue() throws Exception {
@@ -208,28 +262,9 @@ public class OptionalBinderTest extends TestCase {
     Injector injector = Guice.createInjector(module);
     assertEquals("foo", injector.getInstance(String.class));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertEquals("foo", optional.get());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertEquals("foo", optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertEquals("foo", optionalJxP.get().get());
-
+    assertOptionalState(injector, ExpectedValueState.PRESENT, ExpectedProviderState.PRESENT, "foo");
     assertOptionalVisitor(
         stringKey, setOf(module), VisitType.BOTH, 0, null, null, providerInstance("foo"));
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertEquals("foo", optional.get());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertEquals("foo", optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertEquals("foo", optionalJxP.get().get());
   }
 
   public void testUsesUserBoundValueNullProvidersMakeAbsent() throws Exception {
@@ -249,28 +284,9 @@ public class OptionalBinderTest extends TestCase {
     Injector injector = Guice.createInjector(module);
     assertEquals(null, injector.getInstance(String.class));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertFalse(optional.isPresent());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertEquals(null, optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertEquals(null, optionalJxP.get().get());
-
+    assertOptionalState(injector, ExpectedValueState.EMPTY, ExpectedProviderState.PRESENT, null);
     assertOptionalVisitor(
         stringKey, setOf(module), VisitType.BOTH, 0, null, null, providerInstance(null));
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertFalse(optional.isPresent());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertEquals(null, optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertEquals(null, optionalJxP.get().get());
   }
 
   private static class JitBinding {
@@ -358,33 +374,8 @@ public class OptionalBinderTest extends TestCase {
     Injector injector = Guice.createInjector(module);
     assertEquals("a", injector.getInstance(String.class));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertTrue(optional.isPresent());
-    assertEquals("a", optional.get());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertTrue(optionalP.isPresent());
-    assertEquals("a", optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("a", optionalJxP.get().get());
-
+    assertOptionalState(injector, ExpectedValueState.PRESENT, ExpectedProviderState.PRESENT, "a");
     assertOptionalVisitor(stringKey, setOf(module), VisitType.BOTH, 0, instance("a"), null, null);
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertTrue(optional.isPresent());
-    assertEquals("a", optional.get());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertTrue(optionalP.isPresent());
-    assertEquals("a", optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("a", optionalJxP.get().get());
   }
 
   public void testSetBinding() throws Exception {
@@ -398,33 +389,8 @@ public class OptionalBinderTest extends TestCase {
     Injector injector = Guice.createInjector(module);
     assertEquals("a", injector.getInstance(String.class));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertTrue(optional.isPresent());
-    assertEquals("a", optional.get());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertTrue(optionalP.isPresent());
-    assertEquals("a", optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("a", optionalJxP.get().get());
-
+    assertOptionalState(injector, ExpectedValueState.PRESENT, ExpectedProviderState.PRESENT, "a");
     assertOptionalVisitor(stringKey, setOf(module), VisitType.BOTH, 0, null, instance("a"), null);
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertTrue(optional.isPresent());
-    assertEquals("a", optional.get());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertTrue(optionalP.isPresent());
-    assertEquals("a", optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("a", optionalJxP.get().get());
   }
 
   public void testSetBindingOverridesDefault() throws Exception {
@@ -441,34 +407,9 @@ public class OptionalBinderTest extends TestCase {
     Injector injector = Guice.createInjector(module);
     assertEquals("b", injector.getInstance(String.class));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertTrue(optional.isPresent());
-    assertEquals("b", optional.get());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertTrue(optionalP.isPresent());
-    assertEquals("b", optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("b", optionalJxP.get().get());
-
+    assertOptionalState(injector, ExpectedValueState.PRESENT, ExpectedProviderState.PRESENT, "b");
     assertOptionalVisitor(
         stringKey, setOf(module), VisitType.BOTH, 0, instance("a"), instance("b"), null);
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertTrue(optional.isPresent());
-    assertEquals("b", optional.get());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertTrue(optionalP.isPresent());
-    assertEquals("b", optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("b", optionalJxP.get().get());
   }
 
   public void testSpreadAcrossModules() throws Exception {
@@ -495,21 +436,8 @@ public class OptionalBinderTest extends TestCase {
         };
 
     Injector injector = Guice.createInjector(module1, module2, module3);
-    assertEquals("b", injector.getInstance(String.class));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertTrue(optional.isPresent());
-    assertEquals("b", optional.get());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertTrue(optionalP.isPresent());
-    assertEquals("b", optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("b", optionalJxP.get().get());
-
+    assertOptionalState(injector, ExpectedValueState.PRESENT, ExpectedProviderState.PRESENT, "b");
     assertOptionalVisitor(
         stringKey,
         setOf(module1, module2, module3),
@@ -518,19 +446,6 @@ public class OptionalBinderTest extends TestCase {
         instance("a"),
         instance("b"),
         null);
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertTrue(optional.isPresent());
-    assertEquals("b", optional.get());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertTrue(optionalP.isPresent());
-    assertEquals("b", optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("b", optionalJxP.get().get());
   }
 
   public void testExactSameBindingCollapses_defaults() throws Exception {
@@ -549,33 +464,8 @@ public class OptionalBinderTest extends TestCase {
     Injector injector = Guice.createInjector(module);
     assertEquals("a", injector.getInstance(String.class));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertTrue(optional.isPresent());
-    assertEquals("a", optional.get());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertTrue(optionalP.isPresent());
-    assertEquals("a", optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("a", optionalJxP.get().get());
-
+    assertOptionalState(injector, ExpectedValueState.PRESENT, ExpectedProviderState.PRESENT, "a");
     assertOptionalVisitor(stringKey, setOf(module), VisitType.BOTH, 0, instance("a"), null, null);
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertTrue(optional.isPresent());
-    assertEquals("a", optional.get());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertTrue(optionalP.isPresent());
-    assertEquals("a", optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("a", optionalJxP.get().get());
   }
 
   public void testExactSameBindingCollapses_actual() throws Exception {
@@ -594,33 +484,8 @@ public class OptionalBinderTest extends TestCase {
     Injector injector = Guice.createInjector(module);
     assertEquals("a", injector.getInstance(String.class));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertTrue(optional.isPresent());
-    assertEquals("a", optional.get());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertTrue(optionalP.isPresent());
-    assertEquals("a", optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("a", optionalJxP.get().get());
-
+    assertOptionalState(injector, ExpectedValueState.PRESENT, ExpectedProviderState.PRESENT, "a");
     assertOptionalVisitor(stringKey, setOf(module), VisitType.BOTH, 0, null, instance("a"), null);
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertTrue(optional.isPresent());
-    assertEquals("a", optional.get());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertTrue(optionalP.isPresent());
-    assertEquals("a", optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("a", optionalJxP.get().get());
   }
 
   public void testDifferentBindingsFail_defaults() {
@@ -718,20 +583,12 @@ public class OptionalBinderTest extends TestCase {
     Injector injector = Guice.createInjector(module1, module2, module3);
     assertEquals("b", injector.getInstance(Key.get(String.class, Names.named("foo"))));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString, Names.named("foo")));
-    assertTrue(optional.isPresent());
-    assertEquals("b", optional.get());
-
-    Optional<Provider<String>> optionalP =
-        injector.getInstance(Key.get(optionalOfProviderString, Names.named("foo")));
-    assertTrue(optionalP.isPresent());
-    assertEquals("b", optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString, Names.named("foo")));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("b", optionalJxP.get().get());
-
+    assertOptionalState(
+        injector,
+        Names.named("foo"),
+        ExpectedValueState.PRESENT,
+        ExpectedProviderState.PRESENT,
+        "b");
     assertOptionalVisitor(
         Key.get(String.class, Names.named("foo")),
         setOf(module1, module2, module3),
@@ -740,24 +597,6 @@ public class OptionalBinderTest extends TestCase {
         instance("a"),
         instance("b"),
         null);
-
-    optional =
-        Optional.fromJavaUtil(
-            injector.getInstance(Key.get(javaOptionalOfString, Names.named("foo"))));
-    assertTrue(optional.isPresent());
-    assertEquals("b", optional.get());
-
-    optionalP =
-        Optional.fromJavaUtil(
-            injector.getInstance(Key.get(javaOptionalOfProviderString, Names.named("foo"))));
-    assertTrue(optionalP.isPresent());
-    assertEquals("b", optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(
-            injector.getInstance(Key.get(javaOptionalOfJavaxProviderString, Names.named("foo"))));
-    assertTrue(optionalJxP.isPresent());
-    assertEquals("b", optionalJxP.get().get());
   }
 
   public void testMultipleDifferentOptionals() {
@@ -808,8 +647,8 @@ public class OptionalBinderTest extends TestCase {
 
     Optional<Provider<Integer>> optionalP =
         injector.getInstance(Key.get(optionalOfProviderInteger));
-    Optional<javax.inject.Provider<Integer>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderInteger));
+    Optional<jakarta.inject.Provider<Integer>> optionalJkP =
+        injector.getInstance(Key.get(optionalOfJakartaProviderInteger));
 
     assertEquals(1, injector.getInstance(Integer.class).intValue());
     assertEquals(2, injector.getInstance(Integer.class).intValue());
@@ -821,28 +660,28 @@ public class OptionalBinderTest extends TestCase {
     // But getting another Optional<Integer> will give a new one.
     assertEquals(4, injector.getInstance(Key.get(optionalOfInteger)).get().intValue());
 
-    // And the Optional<Provider> will return a provider that gives a new value each time.
-    assertEquals(5, optionalP.get().get().intValue());
-    assertEquals(6, optionalP.get().get().intValue());
-
-    assertEquals(7, optionalJxP.get().get().intValue());
-    assertEquals(8, optionalJxP.get().get().intValue());
-
     // and same rules with java.util.Optional
     optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfInteger)));
-    assertEquals(9, optional.get().intValue());
-    assertEquals(9, optional.get().intValue());
+    assertEquals(5, optional.get().intValue());
+    assertEquals(5, optional.get().intValue());
     optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfInteger)));
-    assertEquals(10, optional.get().intValue());
+    assertEquals(6, optional.get().intValue());
 
+    // And the Optional<Provider> will return a provider that gives a new value each time.
+    // (both for guava & java.util Optional)
+    assertEquals(7, optionalP.get().get().intValue());
+    assertEquals(8, optionalP.get().get().intValue());
     optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderInteger)));
-    assertEquals(11, optionalP.get().get().intValue());
-    assertEquals(12, optionalP.get().get().intValue());
+    assertEquals(9, optionalP.get().get().intValue());
+    assertEquals(10, optionalP.get().get().intValue());
 
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderInteger)));
-    assertEquals(13, optionalJxP.get().get().intValue());
-    assertEquals(14, optionalJxP.get().get().intValue());
+    // Same with jakarta provider.
+    assertEquals(11, optionalJkP.get().get().intValue());
+    assertEquals(12, optionalJkP.get().get().intValue());
+    optionalJkP =
+        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJakartaProviderInteger)));
+    assertEquals(13, optionalJkP.get().get().intValue());
+    assertEquals(14, optionalJkP.get().get().intValue());
   }
 
   public void testLinkedToNullProvidersMakeAbsentValuesAndPresentProviders_default()
@@ -859,18 +698,7 @@ public class OptionalBinderTest extends TestCase {
     Injector injector = Guice.createInjector(module);
     assertNull(injector.getInstance(String.class));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertFalse(optional.isPresent());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertTrue(optionalP.isPresent());
-    assertNull(optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertTrue(optionalJxP.isPresent());
-    assertNull(optionalJxP.get().get());
-
+    assertOptionalState(injector, ExpectedValueState.EMPTY, ExpectedProviderState.PRESENT, null);
     assertOptionalVisitor(
         stringKey,
         setOf(module),
@@ -879,18 +707,6 @@ public class OptionalBinderTest extends TestCase {
         SpiUtils.<String>providerInstance(null),
         null,
         null);
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertFalse(optional.isPresent());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertTrue(optionalP.isPresent());
-    assertNull(optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertTrue(optionalJxP.isPresent());
-    assertNull(optionalJxP.get().get());
   }
 
   public void testLinkedToNullProvidersMakeAbsentValuesAndPresentProviders_actual()
@@ -907,18 +723,7 @@ public class OptionalBinderTest extends TestCase {
     Injector injector = Guice.createInjector(module);
     assertNull(injector.getInstance(String.class));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertFalse(optional.isPresent());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertTrue(optionalP.isPresent());
-    assertNull(optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertTrue(optionalJxP.isPresent());
-    assertNull(optionalJxP.get().get());
-
+    assertOptionalState(injector, ExpectedValueState.EMPTY, ExpectedProviderState.PRESENT, null);
     assertOptionalVisitor(
         stringKey,
         setOf(module),
@@ -927,18 +732,6 @@ public class OptionalBinderTest extends TestCase {
         null,
         SpiUtils.<String>providerInstance(null),
         null);
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertFalse(optional.isPresent());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertTrue(optionalP.isPresent());
-    assertNull(optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertTrue(optionalJxP.isPresent());
-    assertNull(optionalJxP.get().get());
   }
 
   // TODO(sameb): Maybe change this?
@@ -956,18 +749,7 @@ public class OptionalBinderTest extends TestCase {
     Injector injector = Guice.createInjector(module);
     assertNull(injector.getInstance(String.class));
 
-    Optional<String> optional = injector.getInstance(Key.get(optionalOfString));
-    assertFalse(optional.isPresent());
-
-    Optional<Provider<String>> optionalP = injector.getInstance(Key.get(optionalOfProviderString));
-    assertTrue(optionalP.isPresent());
-    assertNull(optionalP.get().get());
-
-    Optional<javax.inject.Provider<String>> optionalJxP =
-        injector.getInstance(Key.get(optionalOfJavaxProviderString));
-    assertTrue(optionalJxP.isPresent());
-    assertNull(optionalP.get().get());
-
+    assertOptionalState(injector, ExpectedValueState.EMPTY, ExpectedProviderState.PRESENT, null);
     assertOptionalVisitor(
         stringKey,
         setOf(module),
@@ -976,18 +758,6 @@ public class OptionalBinderTest extends TestCase {
         instance("a"),
         SpiUtils.<String>providerInstance(null),
         null);
-
-    optional = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfString)));
-    assertFalse(optional.isPresent());
-
-    optionalP = Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfProviderString)));
-    assertTrue(optionalP.isPresent());
-    assertNull(optionalP.get().get());
-
-    optionalJxP =
-        Optional.fromJavaUtil(injector.getInstance(Key.get(javaOptionalOfJavaxProviderString)));
-    assertTrue(optionalJxP.isPresent());
-    assertNull(optionalJxP.get().get());
   }
 
   public void testSourceLinesInException() {
@@ -1005,6 +775,7 @@ public class OptionalBinderTest extends TestCase {
       assertContains(
           expected.getMessage(),
           "No implementation for Integer",
+          "Requested by:",
           getShortName(module) + ".configure");
     }
   }

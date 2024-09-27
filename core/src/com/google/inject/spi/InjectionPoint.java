@@ -297,10 +297,7 @@ public final class InjectionPoint {
 
     List<Constructor<?>> atInjectConstructors =
         Arrays.stream(rawType.getDeclaredConstructors())
-            .filter(
-                constructor ->
-                    constructor.isAnnotationPresent(Inject.class)
-                        || constructor.isAnnotationPresent(javax.inject.Inject.class))
+            .filter(InjectionPoint::isInjectableConstructor)
             .collect(Collectors.toList());
 
     Constructor<?> injectableConstructor = null;
@@ -343,6 +340,11 @@ public final class InjectionPoint {
       errors.missingConstructor(type);
       throw new ConfigurationException(errors.getMessages());
     }
+  }
+
+  private static boolean isInjectableConstructor(Constructor<?> constructor) {
+    return constructor.isAnnotationPresent(Inject.class)
+        || constructor.isAnnotationPresent(jakarta.inject.Inject.class);
   }
 
   /**
@@ -477,20 +479,20 @@ public final class InjectionPoint {
   abstract static class InjectableMember {
     final TypeLiteral<?> declaringType;
     final boolean optional;
-    final boolean jsr330;
+    final boolean specInject;
     InjectableMember previous;
     InjectableMember next;
 
     InjectableMember(TypeLiteral<?> declaringType, Annotation atInject) {
       this.declaringType = declaringType;
 
-      if (atInject.annotationType() == javax.inject.Inject.class) {
+      if ( atInject.annotationType() == jakarta.inject.Inject.class) {
         optional = false;
-        jsr330 = true;
+        specInject = true;
         return;
       }
 
-      jsr330 = false;
+      specInject = false;
       optional = ((Inject) atInject).optional();
     }
 
@@ -515,7 +517,7 @@ public final class InjectionPoint {
     final Method method;
     /**
      * true if this method overrode a method that was annotated with com.google.inject.Inject. used
-     * to allow different override behavior for guice inject vs javax.inject.Inject
+     * to allow different override behavior for guice inject vs jsr330 Inject
      */
     boolean overrodeGuiceInject;
 
@@ -535,7 +537,7 @@ public final class InjectionPoint {
   }
 
   static Annotation getAtInject(AnnotatedElement member) {
-    Annotation a = member.getAnnotation(javax.inject.Inject.class);
+    Annotation a = member.getAnnotation(jakarta.inject.Inject.class);
     return a == null ? member.getAnnotation(Inject.class) : a;
   }
 
@@ -646,7 +648,7 @@ public final class InjectionPoint {
           InjectableMethod possiblyOverridden = iterator.next();
           if (overrides(method, possiblyOverridden.method)) {
             boolean wasGuiceInject =
-                !possiblyOverridden.jsr330 || possiblyOverridden.overrodeGuiceInject;
+                !possiblyOverridden.specInject || possiblyOverridden.overrodeGuiceInject;
             if (injectableMethod != null) {
               injectableMethod.overrodeGuiceInject = wasGuiceInject;
             }
@@ -719,7 +721,7 @@ public final class InjectionPoint {
           Annotation atInject = getAtInject(field);
           if (atInject != null) {
             InjectableField injectableField = new InjectableField(current, field, atInject);
-            if (injectableField.jsr330 && Modifier.isFinal(field.getModifiers())) {
+            if (injectableField.specInject && Modifier.isFinal(field.getModifiers())) {
               errors.cannotInjectFinalField(field);
             }
             injectableMembers.add(injectableField);
@@ -775,7 +777,7 @@ public final class InjectionPoint {
                 logger.log(
                     Level.WARNING,
                     "Method: {0} is not annotated with @Inject but "
-                        + "is overriding a method that is annotated with @javax.inject.Inject."
+                        + "is overriding a method that is annotated with @jakarta.inject.Inject."
                         + "Because it is not annotated with @Inject, the method will not be "
                         + "injected. To fix this, annotate the method with @Inject.",
                     method);
@@ -819,7 +821,7 @@ public final class InjectionPoint {
    *
    * <p>Prior to Java8, javac would generate these methods in subclasses without annotations, which
    * means this would accidentally stop injecting a method annotated with {@link
-   * javax.inject.Inject}, since the spec says to stop injecting if a subclass isn't annotated with
+   * jakarta.inject.Inject}, since the spec says to stop injecting if a subclass isn't annotated with
    * it.
    *
    * <p>Starting at Java8, javac copies the annotations to the generated subclass method, except it
@@ -837,7 +839,7 @@ public final class InjectionPoint {
 
   private static boolean isValidMethod(InjectableMethod injectableMethod, Errors errors) {
     boolean result = true;
-    if (injectableMethod.jsr330) {
+    if (injectableMethod.specInject) {
       Method method = injectableMethod.method;
       if (Modifier.isAbstract(method.getModifiers())) {
         errors.cannotInjectAbstractMethod(method);
@@ -894,7 +896,7 @@ public final class InjectionPoint {
     return ObjectArrays.concat(javaAnnotations, kotlinAnnotations, Annotation.class);
   }
 
-  /** A method signature. Used to handle method overridding. */
+  /** A method signature. Used to handle method overriding. */
   static class Signature {
 
     final String name;

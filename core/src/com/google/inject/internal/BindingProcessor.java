@@ -98,11 +98,24 @@ final class BindingProcessor extends AbstractBindingProcessor {
             prepareBinding();
             Set<InjectionPoint> injectionPoints = binding.getInjectionPoints();
             T instance = binding.getInstance();
-            @SuppressWarnings("unchecked") // safe to cast to binding<T> because
-            // the processor was constructed w/ it
+            // Note: We cannot use type=`binding.getKey().getTypeLiteral()`, even though it would
+            // be more accurate, because it's very likely that people do:
+            //   bind(new TypeLiteral<Foo>() {}).toInstance(someFooBarInstance);
+            //   bind(new TypeLiteral<Bar>() {}).toInstance(someFooBarInstance);
+            // ... and if we captured the exact type when passing to requestInjection, then we'd
+            // fail because the same instance requested injection from two different types.
+
+            @SuppressWarnings("unchecked") // safe because processor was constructed w/ it
+            Binding<T> bindingT = (Binding<T>) binding;
             Initializable<T> ref =
                 initializer.requestInjection(
-                    injector, instance, (Binding<T>) binding, source, injectionPoints);
+                    injector,
+                    /* type= */ null,
+                    instance,
+                    bindingT,
+                    source,
+                    injectionPoints,
+                    errors);
             ConstantFactory<? extends T> factory = new ConstantFactory<>(ref);
             InternalFactory<? extends T> scopedFactory =
                 Scoping.scope(key, injector, factory, source, scoping);
@@ -115,7 +128,7 @@ final class BindingProcessor extends AbstractBindingProcessor {
           @Override
           public Boolean visit(ProviderInstanceBinding<? extends T> binding) {
             prepareBinding();
-            javax.inject.Provider<? extends T> provider = binding.getUserSuppliedProvider();
+            jakarta.inject.Provider<? extends T> provider = binding.getUserSuppliedProvider();
             if (provider instanceof InternalProviderInstanceBindingImpl.Factory) {
               @SuppressWarnings("unchecked")
               InternalProviderInstanceBindingImpl.Factory<T> asProviderMethod =
@@ -123,9 +136,9 @@ final class BindingProcessor extends AbstractBindingProcessor {
               return visitInternalProviderInstanceBindingFactory(asProviderMethod);
             }
             Set<InjectionPoint> injectionPoints = binding.getInjectionPoints();
-            Initializable<? extends javax.inject.Provider<? extends T>> initializable =
-                initializer.<javax.inject.Provider<? extends T>>requestInjection(
-                    injector, provider, null, source, injectionPoints);
+            Initializable<? extends jakarta.inject.Provider<? extends T>> initializable =
+                initializer.<jakarta.inject.Provider<? extends T>>requestInjection(
+                    injector, /* type= */ null, provider, null, source, injectionPoints, errors);
             // always visited with Binding<T>
             @SuppressWarnings("unchecked")
             InternalFactory<T> factory =
@@ -144,7 +157,7 @@ final class BindingProcessor extends AbstractBindingProcessor {
           @Override
           public Boolean visit(ProviderKeyBinding<? extends T> binding) {
             prepareBinding();
-            Key<? extends javax.inject.Provider<? extends T>> providerKey =
+            Key<? extends jakarta.inject.Provider<? extends T>> providerKey =
                 binding.getProviderKey();
             // always visited with Binding<T>
             @SuppressWarnings("unchecked")

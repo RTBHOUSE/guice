@@ -3,7 +3,9 @@
 load("@rules_java//java:defs.bzl", "java_library")
 load("//:test_defs.bzl", "guice_test_suites")
 
-package(default_testonly = 1)
+package(
+    default_testonly = 1,
+)
 
 # This has an additional dependency on a genrule config:metainf,
 # because we need that file to end up in META-INF/persistence.xml,
@@ -26,7 +28,8 @@ java_library(
         "//third_party/java/hamcrest",
         "//third_party/java/hibernate:hibernate5",
         "//third_party/java/hsqldb:hsqldb2",
-        "//third_party/java/javax_persistence",
+        "//third_party/java/jakarta_inject",
+        "//third_party/java/jakarta_persistence",
         "//third_party/java/junit",
         "//third_party/java/mockito",
     ],
@@ -38,7 +41,10 @@ guice_test_suites(
         "small",
         "medium",
     ],
-    deps = [":tests"],
+    deps = [
+        ":tests",
+        "//extensions/persist/src/com/google/inject/persist",  # bazel requires this b/c of package_info.java
+    ],
 )
 
 [guice_test_suites(
@@ -49,7 +55,10 @@ guice_test_suites(
         "medium",
     ],
     suffix = "_stack_trace_%s" % include_stack_trace_option,
-    deps = [":tests"],
+    deps = [
+        ":tests",
+        "//extensions/persist/src/com/google/inject/persist",  # bazel requires this b/c of package_info.java
+    ],
 ) for include_stack_trace_option in [
     "OFF",
 ]]

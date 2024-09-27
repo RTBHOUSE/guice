@@ -20,8 +20,8 @@ import com.google.inject.Guice;
 import com.google.inject.Injector;
 import com.google.inject.persist.PersistService;
 import com.google.inject.persist.UnitOfWork;
-import javax.persistence.EntityManager;
-import javax.persistence.EntityManagerFactory;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
 import junit.framework.TestCase;
 
 /** @author Dhanji R. Prasanna (dhanji@gmail.com) */
@@ -49,6 +49,8 @@ public class EntityManagerFactoryProvisionTest extends TestCase {
 
     //startup persistence
     injector.getInstance(PersistService.class).start();
+
+    injector.getInstance(UnitOfWork.class).begin();
 
     //obtain em
     assertTrue(injector.getInstance(EntityManager.class).isOpen());

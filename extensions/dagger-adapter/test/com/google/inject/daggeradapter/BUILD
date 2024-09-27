@@ -3,13 +3,13 @@
 load("@rules_java//java:defs.bzl", "java_library")
 load("//:test_defs.bzl", "guice_test_suites")
 
-package(default_testonly = 1)
+package(
+    default_testonly = 1,
+)
 
 java_library(
     name = "tests",
     srcs = glob(["**/*.java"]),
-    plugins = [
-    ],
     deps = [
         "//core/src/com/google/inject",
         "//extensions/dagger-adapter/src/com/google/inject/daggeradapter",
@@ -18,7 +18,7 @@ java_library(
         "//third_party/java/dagger:producers",
         "//third_party/java/guava/base",
         "//third_party/java/guava/collect",
-        "//third_party/java/jsr330_inject",
+        "//third_party/java/jakarta_inject",
         "//third_party/java/junit",
         "//third_party/java/truth",
     ],

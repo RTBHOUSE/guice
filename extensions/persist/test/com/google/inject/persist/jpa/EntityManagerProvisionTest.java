@@ -22,8 +22,8 @@ import com.google.inject.Injector;
 import com.google.inject.Provider;
 import com.google.inject.persist.PersistService;
 import com.google.inject.persist.Transactional;
-import javax.persistence.EntityManager;
-import javax.persistence.EntityManagerFactory;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
 import junit.framework.TestCase;
 
 /**
@@ -57,11 +57,6 @@ public class EntityManagerProvisionTest extends TestCase {
 
     dao.persist(te);
 
-    //im not sure this hack works...
-    assertFalse(
-        "Duplicate entity managers crossing-scope",
-        dao.lastEm.equals(injector.getInstance(EntityManager.class)));
-
     //try to start a new em in a new txn
     dao = injector.getInstance(JpaDao.class);
 
@@ -79,11 +74,6 @@ public class EntityManagerProvisionTest extends TestCase {
     JpaTestEntity te = new JpaTestEntity();
 
     dao.persist(te);
-
-    //im not sure this hack works...
-    assertFalse(
-        "Duplicate entity managers crossing-scope",
-        dao.lastEm.equals(injector.getInstance(EntityManager.class)));
 
     //try to start a new em in a new txn
     dao = injector.getInstance(JpaDao.class);

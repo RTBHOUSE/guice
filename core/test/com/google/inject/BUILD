@@ -4,7 +4,9 @@
 load("@rules_java//java:defs.bzl", "java_library")
 load("//:test_defs.bzl", "guice_test_suites")
 
-package(default_testonly = 1)
+package(
+    default_testonly = 1,
+)
 
 TEST_SUPPORT_SRCS = [
     "Asserts.java",
@@ -46,8 +48,6 @@ java_library(
         ],
     ),
     javacopts = ["-Xep:BetaApi:OFF"],
-    plugins = [
-    ],
     deps = [
         ":testsupport",
         "//core/src/com/google/inject",
@@ -57,7 +57,7 @@ java_library(
         "//third_party/java/guava/collect",
         "//third_party/java/guava/testing",
         "//third_party/java/guava/util/concurrent",
-        "//third_party/java/jsr330_inject",
+        "//third_party/java/jakarta_inject",
         "//third_party/java/junit",
         "//third_party/java/truth",
     ],
@@ -67,9 +67,6 @@ java_library(
     name = "add_opens_tests",
     srcs = ADD_OPENS_SRCS,
     javacopts = ["-Xep:BetaApi:OFF"],
-    visibility = [
-        "//:src",
-    ],
     deps = [
         "//core/src/com/google/inject",
         "//third_party/java/guava/base",
@@ -85,6 +82,7 @@ java_library(
     deps = [
         ":add_opens_tests",
         ":tests",
+        "//core/src/com/google/inject",
         "//core/test/com/googlecode/guice:tests",
         "//third_party/java/junit",
     ],
@@ -104,6 +102,27 @@ guice_test_suites(
     deps = [
         ":add_opens_tests",
         ":tests",
+        "//core/src/com/google/inject",  # bazel requires this b/c of package_info.java
+    ],
+)
+
+guice_test_suites(
+    name = "gen_tests_with_windows_separator",
+    jvm_flags = [
+        # those 2 options are required for some tests that checks stack traces
+        "-XX:+UnlockDiagnosticVMOptions",
+        "-XX:+ShowHiddenFrames",
+        "-Dline.separator='\r\n'",
+    ],
+    sizes = [
+        "small",
+        "medium",
+    ],
+    suffix = "_with_windows_separator",
+    deps = [
+        ":add_opens_tests",
+        ":tests",
+        "//core/src/com/google/inject",  # bazel requires this b/c of package_info.java
     ],
 )
 
@@ -125,6 +144,7 @@ guice_test_suites(
     deps = [
         ":add_opens_tests",
         ":tests",
+        "//core/src/com/google/inject",  # bazel requires this b/c of package_info.java
     ],
 ) for include_stack_trace_option in [
     "OFF",
@@ -148,6 +168,7 @@ guice_test_suites(
     deps = [
         ":add_opens_tests",
         ":tests",
+        "//core/src/com/google/inject",  # bazel requires this b/c of package_info.java
     ],
 ) for custom_class_loading_option in [
     "OFF",

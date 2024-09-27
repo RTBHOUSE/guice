@@ -1,13 +1,13 @@
-# Copyright 2011 Google Inc.  All rights reserved.
-# Author: sameb@google.com (Sam Berlin)
-
 load("@rules_java//java:defs.bzl", "java_library")
-load("//:mvn.bzl", "gen_maven_artifact")
 load(
     "//:build_defs.bzl",
     "JAVAC_OPTS",
     "POM_VERSION",
 )
+load("//:mvn.bzl", "gen_maven_artifact")
+
+# Copyright 2011 Google Inc.  All rights reserved.
+# Author: sameb@google.com (Sam Berlin)
 
 package(
     default_visibility = ["//:src"],
@@ -35,6 +35,15 @@ IMPLEMENTED_BY_SRCS = [
     "ImplementedBy.java",
 ]
 
+CALLER_FINDER_STACK_WALKER_SRCS = ["internal/util/DirectStackWalkerFinder.java"]
+
+java_library(
+    name = "caller_finder_impl",
+    srcs = CALLER_FINDER_STACK_WALKER_SRCS,
+    javacopts = JAVAC_OPTS,
+    deps = [":caller_finder_common"],
+)
+
 java_library(
     name = "caller_finder_common",
     srcs = CALLER_FINDER_COMMON_SRCS,
@@ -52,7 +61,7 @@ java_library(
     srcs = PROVIDED_BY_SRCS,
     javacopts = JAVAC_OPTS,
     deps = [
-        "//third_party/java/jsr330_inject",
+        "//third_party/java/jakarta_inject",
     ],
 )
 
@@ -65,38 +74,37 @@ java_library(
     name = "inject",
     srcs = glob(
         ["**/*.java"],
-        exclude = IMPLEMENTED_BY_SRCS + PROVIDED_BY_SRCS + ANNOTATION_SRCS + CALLER_FINDER_COMMON_SRCS,
+        exclude = IMPLEMENTED_BY_SRCS +
+                  PROVIDED_BY_SRCS +
+                  ANNOTATION_SRCS +
+                  CALLER_FINDER_COMMON_SRCS +
+                  CALLER_FINDER_STACK_WALKER_SRCS,
     ),
     javacopts = JAVAC_OPTS,
-    plugins = [
-    ],
     tags = ["maven_coordinates=com.google.inject:guice:" + POM_VERSION],
     exports = [
         ":annotations",
+        ":caller_finder_common",
+        ":caller_finder_impl",
         ":implemented_by",
         ":provided_by",
-        # TODO(user): caller_finder_common shouldn't be exported, but validation requires
-        # it be exported right now.
-        ":caller_finder_common",
     ],
     deps = [
-        # Warning: Be very careful adding new dependencies,
-        # These all have to mirrored in the open-source
-        # build (and jarjar'd up).
         ":annotations",
         ":caller_finder_common",
+        ":caller_finder_impl",
         ":implemented_by",
         ":provided_by",
+        "//third_party/java/aopalliance",
+        "//third_party/java/asm",
+        "//third_party/java/error_prone:annotations",
         "//third_party/java/guava/annotations",
         "//third_party/java/guava/base",
         "//third_party/java/guava/cache",
         "//third_party/java/guava/collect",
         "//third_party/java/guava/primitives",
-        "//third_party/java/aopalliance",
-        "//third_party/java/asm",
-        "//third_party/java/error_prone:annotations",
+        "//third_party/java/jakarta_inject",
         "//third_party/java/jsr305_annotations",
-        "//third_party/java/jsr330_inject",
     ],
 )
 
@@ -104,11 +112,9 @@ java_library(
     name = "annotations",
     srcs = ANNOTATION_SRCS,
     javacopts = JAVAC_OPTS,
-    plugins = [
-    ],
     deps = [
         "//third_party/java/error_prone:annotations",
-        "//third_party/java/jsr330_inject",
+        "//third_party/java/jakarta_inject",
     ],
 )
 
@@ -129,6 +135,7 @@ gen_maven_artifact(
         ":annotations",
         ":implemented_by",
         ":caller_finder_common",
+        ":caller_finder_impl",
         ":provided_by",
     ],
     javadoc_srcs = [":javadoc-srcs"],

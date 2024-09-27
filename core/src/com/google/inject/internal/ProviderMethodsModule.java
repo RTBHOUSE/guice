@@ -120,12 +120,10 @@ public final class ProviderMethodsModule implements Module {
           if (isStaticModule()
               && !Modifier.isStatic(method.getModifiers())
               && !Modifier.isAbstract(method.getModifiers())) {
-            binder
-                .skipSources(ProviderMethodsModule.class)
-                .addError(
-                    "%s is an instance method, but a class literal was passed. Make this method"
-                        + " static or pass an instance of the module instead.",
-                    method);
+            binder.addError(
+                "%s is an instance method, but a class literal was passed. Make this method"
+                    + " static or pass an instance of the module instead.",
+                method);
             continue;
           }
           if (result == null) {
@@ -297,7 +295,8 @@ public final class ProviderMethodsModule implements Module {
     Key<T> key = getKey(errors, returnType, method, method.getAnnotations());
     boolean prepareMethodError = false;
     try {
-      key = scanner.prepareMethod(binder, annotation, key, point);
+      key =
+          scanner.prepareMethod(binder, annotation, key, point, isStaticModule() ? null : delegate);
     } catch (Throwable t) {
       prepareMethodError = true;
       binder.addError(t);

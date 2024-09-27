@@ -6,7 +6,7 @@
   <parent>
     <groupId>com.google.inject</groupId>
     <artifactId>guice-parent</artifactId>
-    <version>5.1.1-SNAPSHOT</version>
+    <version>7.0.1-SNAPSHOT</version>
   </parent>
 
   <artifactId>guice</artifactId>
@@ -15,8 +15,8 @@
 
   <dependencies>
     <dependency>
-      <groupId>javax.inject</groupId>
-      <artifactId>javax.inject</artifactId>
+      <groupId>jakarta.inject</groupId>
+      <artifactId>jakarta.inject-api</artifactId>
     </dependency>
     <dependency>
       <groupId>aopalliance</groupId>
@@ -25,6 +25,11 @@
     <dependency>
       <groupId>com.google.guava</groupId>
       <artifactId>guava</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.google.errorprone</groupId>
+      <artifactId>error_prone_annotations</artifactId>
+      <optional>true</optional>
     </dependency>
     <!--
      | ASM is embedded by default by the JarJar build profile
@@ -38,8 +43,8 @@
      | Test dependencies
     -->
     <dependency>
-      <groupId>javax.inject</groupId>
-      <artifactId>javax.inject-tck</artifactId>
+      <groupId>jakarta.inject</groupId>
+      <artifactId>jakarta.inject-tck</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -64,6 +69,11 @@
       <artifactId>truth</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>com.google.truth.extensions</groupId>
+      <artifactId>truth-java8-extension</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
@@ -74,12 +84,9 @@
       <plugin>
         <artifactId>maven-remote-resources-plugin</artifactId>
       </plugin>
-      <!--
-       | Enable Java6 conformance checks
-      -->
       <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>animal-sniffer-maven-plugin</artifactId>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
       </plugin>
       <plugin>
         <artifactId>maven-surefire-plugin</artifactId>
@@ -120,6 +127,15 @@
               <argLine>-Dguice_bytecode_gen_option=DISABLED</argLine>
             </configuration>
           </execution>
+          <execution>
+            <id>with-windows-line-separators</id>
+            <phase>test</phase>
+            <goals><goal>test</goal></goals>
+            <configuration>
+              <!-- enable ShowHiddenFrames to help tests find AOP frames on Java17 -->
+              <argLine>-Dline.separator='\r\n' -XX:+UnlockDiagnosticVMOptions -XX:+ShowHiddenFrames</argLine>
+            </configuration>
+          </execution>
         </executions>
       </plugin>
       <!--
@@ -131,7 +147,7 @@
         <configuration>
           <instructions>
             <Bundle-Name>${project.artifactId}</Bundle-Name>
-            <Import-Package>!org.objectweb.asm.*,!com.google.inject.*,*</Import-Package>
+            <Import-Package>!org.objectweb.asm.*,!com.google.inject.*,!javax.annotation,*</Import-Package>
             <Eclipse-ExtensibleAPI>true</Eclipse-ExtensibleAPI>
           </instructions>
         </configuration>

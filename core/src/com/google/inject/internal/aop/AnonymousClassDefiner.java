@@ -16,7 +16,6 @@
 
 package com.google.inject.internal.aop;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 /**
@@ -26,24 +25,39 @@ import java.lang.reflect.Method;
  */
 final class AnonymousClassDefiner implements ClassDefiner {
 
-  private static final Object THE_UNSAFE;
+  private static final sun.misc.Unsafe THE_UNSAFE;
   private static final Method ANONYMOUS_DEFINE_METHOD;
 
+  /** True if this class err'd during initialization and should not be used. */
+  static final boolean HAS_ERROR;
+
   static {
+    sun.misc.Unsafe theUnsafe;
+    Method anonymousDefineMethod;
     try {
-      Class<?> unsafeType = Class.forName("sun.misc.Unsafe");
-      Field theUnsafeField = unsafeType.getDeclaredField("theUnsafe");
-      theUnsafeField.setAccessible(true);
-      THE_UNSAFE = theUnsafeField.get(null);
-      ANONYMOUS_DEFINE_METHOD =
-          unsafeType.getMethod("defineAnonymousClass", Class.class, byte[].class, Object[].class);
+      theUnsafe = UnsafeGetter.getUnsafe();
+      // defineAnonymousClass was removed in JDK17, so we must refer to it reflectively.
+      anonymousDefineMethod =
+          sun.misc.Unsafe.class.getMethod(
+              "defineAnonymousClass", Class.class, byte[].class, Object[].class);
     } catch (ReflectiveOperationException e) {
-      throw new ExceptionInInitializerError(e);
+      theUnsafe = null;
+      anonymousDefineMethod = null;
     }
+
+    THE_UNSAFE = theUnsafe;
+    ANONYMOUS_DEFINE_METHOD = anonymousDefineMethod;
+    HAS_ERROR = theUnsafe == null;
   }
 
   @Override
   public Class<?> define(Class<?> hostClass, byte[] bytecode) throws Exception {
+    if (HAS_ERROR) {
+      throw new IllegalStateException(
+          "Should not be called. An earlier error occurred during AnonymousClassDefiner static"
+              + " initialization.");
+    }
+
     return (Class<?>) ANONYMOUS_DEFINE_METHOD.invoke(THE_UNSAFE, hostClass, bytecode, null);
   }
 }

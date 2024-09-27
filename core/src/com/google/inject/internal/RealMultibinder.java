@@ -53,7 +53,6 @@ public final class RealMultibinder<T> implements Module {
 
   /** Implementation of newSetBinder. */
   public static <T> RealMultibinder<T> newRealSetBinder(Binder binder, Key<T> key) {
-    binder = binder.skipSources(RealMultibinder.class);
     RealMultibinder<T> result = new RealMultibinder<>(binder, key);
     binder.install(result);
     return result;
@@ -74,12 +73,12 @@ public final class RealMultibinder<T> implements Module {
   }
 
   @SuppressWarnings("unchecked")
-  static <T> TypeLiteral<Collection<javax.inject.Provider<T>>> collectionOfJavaxProvidersOf(
+  static <T> TypeLiteral<Collection<jakarta.inject.Provider<T>>> collectionOfJakartaProvidersOf(
       TypeLiteral<T> elementType) {
     Type providerType =
-        Types.newParameterizedType(javax.inject.Provider.class, elementType.getType());
+        Types.newParameterizedType(jakarta.inject.Provider.class, elementType.getType());
     Type type = Types.collectionOf(providerType);
-    return (TypeLiteral<Collection<javax.inject.Provider<T>>>) TypeLiteral.get(type);
+    return (TypeLiteral<Collection<jakarta.inject.Provider<T>>>) TypeLiteral.get(type);
   }
 
   @SuppressWarnings("unchecked")
@@ -97,33 +96,27 @@ public final class RealMultibinder<T> implements Module {
     this.bindingSelection = new BindingSelection<>(key);
   }
 
+  @SuppressWarnings({"unchecked", "rawtypes"}) // we use raw Key to link bindings together.
   @Override
   public void configure(Binder binder) {
     checkConfiguration(!bindingSelection.isInitialized(), "Multibinder was already initialized");
 
-    RealMultibinderProvider<T> setProvider = new RealMultibinderProvider<T>(bindingSelection);
     // Bind the setKey to the provider wrapped w/ extension support.
     binder
         .bind(bindingSelection.getSetKey())
-        .toProvider(new ExtensionRealMultibinderProvider<>(setProvider));
-    // Bind the <? extends T> to the provider w/o extension support.
-    // It's important the exactly one binding implement the extension support and show
-    // the other keys as aliases, to adhere to the extension contract.
-    binder.bind(bindingSelection.getSetOfExtendsKey()).toProvider(setProvider);
+        .toProvider(new RealMultibinderProvider<>(bindingSelection));
+    binder.bind(bindingSelection.getSetOfExtendsKey()).to(bindingSelection.getSetKey());
 
-    Provider<Collection<Provider<T>>> collectionOfProvidersProvider =
-        new RealMultibinderCollectionOfProvidersProvider<T>(bindingSelection);
     binder
         .bind(bindingSelection.getCollectionOfProvidersKey())
-        .toProvider(collectionOfProvidersProvider);
+        .toProvider(new RealMultibinderCollectionOfProvidersProvider<T>(bindingSelection));
 
     // The collection this exposes is internally an ImmutableList, so it's OK to massage
-    // the guice Provider to javax Provider in the value (since the guice Provider implements
-    // javax Provider).
-    @SuppressWarnings("unchecked")
-    Provider<Collection<javax.inject.Provider<T>>> javaxProvider =
-        (Provider) collectionOfProvidersProvider;
-    binder.bind(bindingSelection.getCollectionOfJavaxProvidersKey()).toProvider(javaxProvider);
+    // the guice Provider to jakarta Provider in the value (since the guice Provider implements
+    // jakarta Provider).
+    binder
+        .bind(bindingSelection.getCollectionOfJakartaProvidersKey())
+        .to((Key) bindingSelection.getCollectionOfProvidersKey());
   }
 
   public void permitDuplicates() {
@@ -217,7 +210,8 @@ public final class RealMultibinder<T> implements Module {
    * so it can be used to supply a {@code Set<T>} and {@code Set<? extends T>}, the latter being
    * useful for Kotlin support.
    */
-  private static final class RealMultibinderProvider<T> extends BaseFactory<T, Set<T>> {
+  private static final class RealMultibinderProvider<T> extends BaseFactory<T, Set<T>>
+      implements ProviderWithExtensionVisitor<Set<T>>, MultibinderBinding<Set<T>> {
     List<Binding<T>> bindings;
     SingleParameterInjector<T>[] injectors;
     boolean permitDuplicates;
@@ -242,21 +236,33 @@ public final class RealMultibinder<T> implements Module {
         // if localInjectors == null, then we have no bindings so return the empty set.
         return ImmutableSet.of();
       }
-      // Ideally we would just add to an ImmutableSet.Builder, but if we did that and there were
-      // duplicates we wouldn't be able to tell which one was the duplicate.  So to manage this we
-      // first put everything into an array and then construct the set.  This way if something gets
-      // dropped we can figure out what it is.
+
+      // If duplicates aren't permitted, we need to capture the original values in order to show a
+      // meaningful error message to users (if duplicates were encountered).
       @SuppressWarnings("unchecked")
-      T[] values = (T[]) new Object[localInjectors.length];
+      T[] values = !permitDuplicates ? (T[]) new Object[localInjectors.length] : null;
+
+      // Avoid ImmutableSet.copyOf(T[]), because it assumes there'll be duplicates in the input, but
+      // in the usual case of permitDuplicates==false, we know the exact size must be
+      // `localInjector.length` (otherwise we fail).  This uses `builderWithExpectedSize` to avoid
+      // the overhead of copyOf or an unknown builder size. If permitDuplicates==true, this will
+      // assume a potentially larger size (but never a smaller size), and `build` will then reduce
+      // as necessary.
+      ImmutableSet.Builder<T> setBuilder =
+          ImmutableSet.<T>builderWithExpectedSize(localInjectors.length);
       for (int i = 0; i < localInjectors.length; i++) {
         SingleParameterInjector<T> parameterInjector = localInjectors[i];
         T newValue = parameterInjector.inject(context);
         if (newValue == null) {
           throw newNullEntryException(i);
         }
-        values[i] = newValue;
+        if (!permitDuplicates) {
+          values[i] = newValue;
+        }
+        setBuilder.add(newValue);
       }
-      ImmutableSet<T> set = ImmutableSet.copyOf(values);
+      ImmutableSet<T> set = setBuilder.build();
+
       // There are fewer items in the set than the array.  Figure out which one got dropped.
       if (!permitDuplicates && set.size() < values.length) {
         throw newDuplicateValuesException(values);
@@ -280,32 +286,6 @@ public final class RealMultibinder<T> implements Module {
                   bindingSelection.getSetKey(), bindings, values, ImmutableList.of(getSource())));
       return new InternalProvisionException(message);
     }
-  }
-
-  /**
-   * Implementation of BaseFactory that exposes details about the multibinder through the extension
-   * SPI.
-   */
-  private static final class ExtensionRealMultibinderProvider<T> extends BaseFactory<T, Set<T>>
-      implements ProviderWithExtensionVisitor<Set<T>>, MultibinderBinding<Set<T>> {
-    final RealMultibinderProvider<T> delegate;
-
-    ExtensionRealMultibinderProvider(RealMultibinderProvider<T> delegate) {
-      // Note: method reference doesn't work for the 2nd arg for some reason when compiling on java8
-      super(delegate.bindingSelection, bs -> bs.getDependencies());
-      this.delegate = delegate;
-    }
-
-    @Override
-    protected void doInitialize() {
-      delegate.doInitialize();
-    }
-
-    @Override
-    protected ImmutableSet<T> doProvision(InternalContext context, Dependency<?> dependency)
-        throws InternalProvisionException {
-      return delegate.doProvision(context, dependency);
-    }
 
     @SuppressWarnings("unchecked")
     @Override
@@ -327,7 +307,7 @@ public final class RealMultibinder<T> implements Module {
     public ImmutableSet<Key<?>> getAlternateSetKeys() {
       return ImmutableSet.of(
           (Key<?>) bindingSelection.getCollectionOfProvidersKey(),
-          (Key<?>) bindingSelection.getCollectionOfJavaxProvidersKey(),
+          (Key<?>) bindingSelection.getCollectionOfJakartaProvidersKey(),
           (Key<?>) bindingSelection.getSetOfExtendsKey());
     }
 
@@ -391,7 +371,7 @@ public final class RealMultibinder<T> implements Module {
     // these are all lazily allocated
     private String setName;
     private Key<Collection<Provider<T>>> collectionOfProvidersKey;
-    private Key<Collection<javax.inject.Provider<T>>> collectionOfJavaxProvidersKey;
+    private Key<Collection<jakarta.inject.Provider<T>>> collectionOfJakartaProvidersKey;
     private Key<Set<? extends T>> setOfExtendsKey;
     private Key<Boolean> permitDuplicatesKey;
 
@@ -508,12 +488,12 @@ public final class RealMultibinder<T> implements Module {
       return local;
     }
 
-    Key<Collection<javax.inject.Provider<T>>> getCollectionOfJavaxProvidersKey() {
-      Key<Collection<javax.inject.Provider<T>>> local = collectionOfJavaxProvidersKey;
+    Key<Collection<jakarta.inject.Provider<T>>> getCollectionOfJakartaProvidersKey() {
+      Key<Collection<jakarta.inject.Provider<T>>> local = collectionOfJakartaProvidersKey;
       if (local == null) {
         local =
-            collectionOfJavaxProvidersKey =
-                setKey.ofType(collectionOfJavaxProvidersOf(elementType));
+            collectionOfJakartaProvidersKey =
+                setKey.ofType(collectionOfJakartaProvidersOf(elementType));
       }
       return local;
     }
@@ -565,7 +545,7 @@ public final class RealMultibinder<T> implements Module {
             || binding.getKey().equals(getPermitDuplicatesKey())
             || binding.getKey().equals(setKey)
             || binding.getKey().equals(collectionOfProvidersKey)
-            || binding.getKey().equals(collectionOfJavaxProvidersKey)
+            || binding.getKey().equals(collectionOfJakartaProvidersKey)
             || binding.getKey().equals(setOfExtendsKey);
       } else {
         return false;

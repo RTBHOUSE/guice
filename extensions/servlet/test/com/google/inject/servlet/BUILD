@@ -3,23 +3,23 @@
 load("@rules_java//java:defs.bzl", "java_library")
 load("//:test_defs.bzl", "guice_test_suites")
 
-package(default_testonly = 1)
+package(
+    default_testonly = 1,
+)
 
 java_library(
     name = "tests",
     srcs = glob(["**/*.java"]),
     javacopts = ["-Xep:FutureReturnValueIgnored:OFF"],
-    plugins = [
-    ],
     deps = [
         "//core/src/com/google/inject",
         "//core/test/com/google/inject:testsupport",
         "//extensions/servlet/src/com/google/inject/servlet",
         "//third_party/java/guava/base",
         "//third_party/java/guava/collect",
+        "//third_party/java/jakarta_servlet_api",
         "//third_party/java/junit",
         "//third_party/java/mockito",
-        "//third_party/java/servlet/servlet_api",
     ],
 )
 
@@ -29,7 +29,10 @@ guice_test_suites(
         "small",
         "medium",
     ],
-    deps = [":tests"],
+    deps = [
+        ":tests",
+        "//extensions/servlet/src/com/google/inject/servlet",  # bazel requires this b/c of package_info.java
+    ],
 )
 
 [guice_test_suites(
@@ -42,7 +45,10 @@ guice_test_suites(
         "medium",
     ],
     suffix = "_stack_trace_%s" % include_stack_trace_option,
-    deps = [":tests"],
+    deps = [
+        ":tests",
+        "//extensions/servlet/src/com/google/inject/servlet",  # bazel requires this b/c of package_info.java
+    ],
 ) for include_stack_trace_option in [
     "OFF",
 ]]

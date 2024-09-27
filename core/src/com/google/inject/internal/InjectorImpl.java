@@ -17,6 +17,7 @@
 package com.google.inject.internal;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.inject.internal.Annotations.findScopeAnnotation;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
@@ -60,6 +61,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Default {@link Injector} implementation.
@@ -264,7 +266,7 @@ final class InjectorImpl implements Injector, Lookups {
       // first try to find a JIT binding that we've already created
       for (InjectorImpl injector = this; injector != null; injector = injector.parent) {
         @SuppressWarnings("unchecked") // we only store bindings that match their key
-        BindingImpl<T> binding = (BindingImpl<T>) injector.jitBindingData.getJitBindings().get(key);
+        BindingImpl<T> binding = (BindingImpl<T>) injector.jitBindingData.getJitBinding(key);
 
         if (binding != null) {
           // If we found a JIT binding and we don't allow them,
@@ -656,12 +658,26 @@ final class InjectorImpl implements Injector, Lookups {
   /** Cleans up any state that may have been cached when constructing the JIT binding. */
   private void removeFailedJitBinding(Binding<?> binding, InjectionPoint ip) {
     jitBindingData.addFailedJitBinding(binding.getKey());
-    jitBindingData.removeJitBinding(binding.getKey());
-    membersInjectorStore.remove(binding.getKey().getTypeLiteral());
-    provisionListenerStore.remove(binding);
-    if (ip != null) {
+    // Be careful cleaning up constructors & jitBindings -- we can't remove
+    // from `jitBindings` if we're still in the process of loading this constructor,
+    // otherwise we can re-enter the constructor's cache and attempt to load it
+    // while already loading it.  See issues:
+    // - https://github.com/google/guice/pull/1633
+    // - https://github.com/google/guice/issues/785
+    // - https://github.com/google/guice/pull/1389
+    // - https://github.com/google/guice/pull/1394
+    // (Note: there may be a better way to do this that avoids the need for the `isLoading`
+    //  conditional, but due to the recursive nature of JIT loading and the way we allow partially
+    //  initialized JIT bindings [to support circular dependencies], there's no other great way
+    //  that I could figure out.)
+    if (ip == null || !constructors.isLoading(ip)) {
+      jitBindingData.removeJitBinding(binding.getKey());
+    }
+    if (ip != null && !constructors.isLoading(ip)) {
       constructors.remove(ip);
     }
+    membersInjectorStore.remove(binding.getKey().getTypeLiteral());
+    provisionListenerStore.remove(binding);
   }
 
   /** Safely gets the dependencies of possibly not initialized bindings. */
@@ -680,7 +696,12 @@ final class InjectorImpl implements Injector, Lookups {
    * none is specified.
    */
   <T> BindingImpl<T> createUninitializedBinding(
-      Key<T> key, Scoping scoping, Object source, Errors errors, boolean jitBinding)
+      Key<T> key,
+      Scoping scoping,
+      Object source,
+      Errors errors,
+      boolean jitBinding,
+      Consumer<CreationListener> creationListenerCallback)
       throws ErrorsException {
     Class<?> rawType = key.getTypeLiteral().getRawType();
 
@@ -702,7 +723,8 @@ final class InjectorImpl implements Injector, Lookups {
     // Handle @ImplementedBy
     if (implementedBy != null) {
       Annotations.checkForMisplacedScopeAnnotations(rawType, source, errors);
-      return createImplementedByBinding(key, scoping, implementedBy, errors);
+      return createImplementedByBinding(
+          key, scoping, implementedBy, errors, creationListenerCallback);
     }
 
     // Handle @ProvidedBy.
@@ -762,11 +784,23 @@ final class InjectorImpl implements Injector, Lookups {
   <T> BindingImpl<T> createProvidedByBinding(
       Key<T> key, Scoping scoping, ProvidedBy providedBy, Errors errors) throws ErrorsException {
     Class<?> rawType = key.getTypeLiteral().getRawType();
-    Class<? extends javax.inject.Provider<?>> providerType = providedBy.value();
+    Class<? extends jakarta.inject.Provider<?>> providerType = providedBy.value();
 
     // Make sure it's not the same type. TODO: Can we check for deeper loops?
     if (providerType == rawType) {
       throw errors.recursiveProviderType().toException();
+    }
+
+    // if no scope is specified, look for a scoping annotation on the raw type
+    if (!scoping.isExplicitlyScoped()) {
+      int numErrorsBefore = errors.size();
+      Class<? extends Annotation> scopeAnnotation = findScopeAnnotation(errors, rawType);
+      if (scopeAnnotation != null) {
+        scoping =
+            Scoping.makeInjectable(
+                Scoping.forAnnotation(scopeAnnotation), this, errors.withSource(rawType));
+      }
+      errors.throwIfNewErrors(numErrorsBefore);
     }
 
     // Assume the provider provides an appropriate type. We double check at runtime.
@@ -790,7 +824,11 @@ final class InjectorImpl implements Injector, Lookups {
 
   /** Creates a binding for a type annotated with @ImplementedBy. */
   private <T> BindingImpl<T> createImplementedByBinding(
-      Key<T> key, Scoping scoping, ImplementedBy implementedBy, Errors errors)
+      Key<T> key,
+      Scoping scoping,
+      ImplementedBy implementedBy,
+      Errors errors,
+      Consumer<CreationListener> creationListenerCallback)
       throws ErrorsException {
     Class<?> rawType = key.getTypeLiteral().getRawType();
     Class<?> implementationType = implementedBy.value();
@@ -812,7 +850,8 @@ final class InjectorImpl implements Injector, Lookups {
     final Key<? extends T> targetKey = Key.get(subclass);
     Object source = rawType;
     FactoryProxy<T> factory = new FactoryProxy<>(this, key, targetKey, source);
-    factory.notify(errors); // causes the factory to initialize itself internally
+    // Notify any callbacks that we have a new CreationListener that needs to be notified.
+    creationListenerCallback.accept(factory);
     return new LinkedBindingImpl<T>(
         this,
         key,
@@ -937,8 +976,16 @@ final class InjectorImpl implements Injector, Lookups {
     }
 
     Object source = key.getTypeLiteral().getRawType();
+    // Notify the creationListener right away, because we're going to recursively create JIT
+    // bindings on-demand.
     BindingImpl<T> binding =
-        createUninitializedBinding(key, Scoping.UNSCOPED, source, errors, true);
+        createUninitializedBinding(
+            key,
+            Scoping.UNSCOPED,
+            source,
+            errors,
+            true,
+            creationListener -> creationListener.notify(errors));
     errors.throwIfNewErrors(numErrorsBefore);
     initializeJitBinding(binding, errors);
     return binding;
