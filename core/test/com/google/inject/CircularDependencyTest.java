@@ -16,16 +16,22 @@
 
 package com.google.inject;
 
+import static com.google.common.truth.Truth.assertThat;
 import static com.google.inject.Asserts.assertContains;
+import static com.google.inject.name.Names.named;
 import static java.lang.annotation.RetentionPolicy.RUNTIME;
+import static org.junit.Assert.assertThrows;
 
 import com.google.common.collect.Maps;
+import com.google.inject.name.Named;
+import com.google.inject.spi.ProviderInstanceBinding;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.Target;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import junit.framework.TestCase;
 
 /**
@@ -438,8 +444,8 @@ public class CircularDependencyTest extends TestCase {
             new AbstractModule() {
               @Override
               protected void configure() {
-                binder.bind(A.class).to(E.class);
-                binder.bind(B.class).to(E.class);
+                bind(A.class).to(E.class);
+                bind(B.class).to(E.class);
               }
             });
     injector.getInstance(A.class);
@@ -452,8 +458,8 @@ public class CircularDependencyTest extends TestCase {
               @Override
               protected void configure() {
                 binder().disableCircularProxies();
-                binder.bind(A.class).to(E.class);
-                binder.bind(B.class).to(E.class);
+                bind(A.class).to(E.class);
+                bind(B.class).to(E.class);
               }
             });
 
@@ -771,5 +777,160 @@ public class CircularDependencyTest extends TestCase {
   static class L {
     @Inject
     void inject(K k) {}
+  }
+
+  // Regression test for a bug where if an InternalProviderInstanceBinding was re-used across
+  // injectors we would bind to the InternalFactory instead of treating it like a BoundProvider.
+  // This would manifest as incorrect behavior when the injector had different options.
+  public void testFromChildWithDisabledCircularProxies_internalProviderInstanceBinding() {
+    var parentKey = Key.get(String.class);
+    Injector parent =
+        Guice.createInjector(
+            new AbstractModule() {
+              // This is the parent's provider that depends on K which requires a cycle to resolve.
+              @Provides
+              String provideString(L ignored) {
+                return "parent";
+              }
+            });
+    assertEquals("parent", parent.getInstance(parentKey));
+    @SuppressWarnings("unchecked")
+    var providerMethod =
+        ((ProviderInstanceBinding<String>) parent.getBinding(parentKey)).getUserSuppliedProvider();
+    var childKey = Key.get(String.class, named("child"));
+    Injector child =
+        parent.createChildInjector(
+            new AbstractModule() {
+              @Override
+              protected void configure() {
+                binder().disableCircularProxies();
+                bind(childKey).toProvider(providerMethod).in(Singleton.class);
+              }
+            });
+    var pe = assertThrows(ProvisionException.class, () -> child.getInstance(childKey));
+    assertThat(pe)
+        .hasMessageThat()
+        .contains(
+            "Found a circular dependency involving CircularDependencyTest$L, and circular"
+                + " dependencies are disabled");
+    assertEquals("parent", parent.getInstance(parentKey));
+  }
+
+  // Regression test for when factories are linked directly
+  public void testFromChildWithDisabledCircularProxies_linkedBinding() {
+    var parentKey = Key.get(String.class);
+    Injector parent =
+        Guice.createInjector(
+            new AbstractModule() {
+              // This is the parent's provider that depends on K which requires a cycle to resolve.
+              @Provides
+              String provideString(L ignored) {
+                return "parent";
+              }
+            });
+    assertEquals("parent", parent.getInstance(parentKey));
+    var childKey = Key.get(String.class, named("child"));
+    Injector child =
+        parent.createChildInjector(
+            new AbstractModule() {
+              @Override
+              protected void configure() {
+                binder().disableCircularProxies();
+                bind(childKey).to(parentKey);
+              }
+            });
+    var pe = assertThrows(ProvisionException.class, () -> child.getInstance(childKey));
+    assertThat(pe)
+        .hasMessageThat()
+        .contains(
+            "Found a circular dependency involving CircularDependencyTest$L, and circular"
+                + " dependencies are disabled");
+    assertEquals("parent", parent.getInstance(parentKey));
+  }
+
+  public void testFromChildWithDisabledCircularProxies_scoping() {
+    var parentKey = Key.get(String.class);
+    Injector parent =
+        Guice.createInjector(
+            new AbstractModule() {
+              // This is the parent's provider that depends on K which requires a cycle to resolve.
+              @Provides
+              @Singleton
+              String provideString(L ignored) {
+                return "parent";
+              }
+            });
+    var childKey = Key.get(String.class, named("child"));
+    Injector child =
+        parent.createChildInjector(
+            new AbstractModule() {
+              @Override
+              protected void configure() {
+                binder().disableCircularProxies();
+              }
+
+              @Provides
+              @Named("child")
+              String provideString(String parent) {
+                return parent;
+              }
+            });
+    var pe = assertThrows(ProvisionException.class, () -> child.getInstance(childKey));
+    assertThat(pe)
+        .hasMessageThat()
+        .contains(
+            "Found a circular dependency involving CircularDependencyTest$L, and circular"
+                + " dependencies are disabled");
+    assertEquals("parent", parent.getInstance(parentKey));
+  }
+
+  public void testFromParentToChildChildWithDisabledCircularProxies_closeOverProvider() {
+    var parentKey = Key.get(String.class);
+    AtomicReference<Provider<String>> childProvider = new AtomicReference<>();
+    Injector parent =
+        Guice.createInjector(
+            new AbstractModule() {
+              @Provides
+              String provideString() {
+                return childProvider.get().get();
+              }
+            });
+    var childKey = Key.get(String.class, named("child"));
+    Injector child =
+        parent.createChildInjector(
+            new AbstractModule() {
+              @Override
+              protected void configure() {
+                binder().disableCircularProxies();
+              }
+
+              @Provides
+              @Named("child")
+              String provideString(L ignored) {
+                return "child";
+              }
+            });
+    childProvider.set(child.getProvider(childKey));
+    // If we directly call child.getInstance(childKey) we will get a ProvisionException because the
+    // child injector has disabled circular proxies.
+    var pe = assertThrows(ProvisionException.class, () -> child.getInstance(childKey));
+    assertThat(pe)
+        .hasMessageThat()
+        .contains(
+            "Found a circular dependency involving CircularDependencyTest$L, and circular"
+                + " dependencies are disabled");
+    // If we launder it through a parent injector which hasn't disabled circular proxies, we should
+    // get the value.
+    // TODO(lukes): This behavior is undesireable, the current definition of InjectorOptions is
+    // the problem.  Most InjectorOptions define how bindings are created, but
+    // `disableCircularProxies` defines how provisions execute which means it can flow across
+    // injectors.  The best solution here would probably be to do one of the following:
+    // 1. Only allow `disableCircularProxies` to be set on the root injector
+    // 2. Model this as an `InternalFlag` so that it is JVM wide.
+    // 3. Change how InternalContext works so that `enterContext` always resets the
+    // disableCircularProxies flag.
+    // #1 is probably the easiest solution to implement but it is a breaking change that would
+    // require applications to change.
+    assertEquals("child", parent.getInstance(parentKey));
   }
 }

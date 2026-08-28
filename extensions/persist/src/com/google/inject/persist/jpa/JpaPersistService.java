@@ -29,37 +29,46 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.util.Map;
-import javax.persistence.EntityManager;
-import javax.persistence.EntityManagerFactory;
-import javax.persistence.Persistence;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
+import jakarta.persistence.Persistence;
 
-/** @author Dhanji R. Prasanna (dhanji@gmail.com) */
+/**
+ * @author Dhanji R. Prasanna (dhanji@gmail.com)
+ */
 @Singleton
 class JpaPersistService implements Provider<EntityManager>, UnitOfWork, PersistService {
   private final ThreadLocal<EntityManager> entityManager = new ThreadLocal<>();
 
   private final String persistenceUnitName;
   private final Map<?, ?> persistenceProperties;
+  private final JpaPersistOptions options;
 
   @Inject
   public JpaPersistService(
-      @Jpa String persistenceUnitName, @Nullable @Jpa Map<?, ?> persistenceProperties) {
+      @Jpa JpaPersistOptions options,
+      @Jpa String persistenceUnitName,
+      @Nullable @Jpa Map<?, ?> persistenceProperties) {
+    this.options = options;
     this.persistenceUnitName = persistenceUnitName;
     this.persistenceProperties = persistenceProperties;
   }
 
   @Override
   public EntityManager get() {
-    if (!isWorking()) {
+    if (options.getAutoBeginWorkOnEntityManagerCreation() && !isWorking()) {
       begin();
     }
 
     EntityManager em = entityManager.get();
     Preconditions.checkState(
         null != em,
-        "Requested EntityManager outside work unit. "
-            + "Try calling UnitOfWork.begin() first, or use a PersistFilter if you "
-            + "are inside a servlet environment.");
+        "Requested EntityManager outside work unit. As of Guice 6.0, Guice Persist doesn't"
+            + " automatically begin the unit of work when provisioning an EntityManager. To"
+            + " preserve the legacy behavior, construct the `JpaPersistModule` with a"
+            + " `JpaPersistOptions.builder().setAutoBeginWorkOnEntityManagerCreation(true).build()`."
+            + " Alternately, try calling UnitOfWork.begin() first, or use a PersistFilter if you"
+            + " are inside a servlet environment.");
 
     return em;
   }
@@ -103,7 +112,9 @@ class JpaPersistService implements Provider<EntityManager>, UnitOfWork, PersistS
 
   @Override
   public synchronized void start() {
-    Preconditions.checkState(null == emFactory, "Persistence service was already initialized.");
+    if (null != emFactory) {
+      return;
+    }
 
     if (null != persistenceProperties) {
       this.emFactory =
@@ -115,8 +126,9 @@ class JpaPersistService implements Provider<EntityManager>, UnitOfWork, PersistS
 
   @Override
   public synchronized void stop() {
-    Preconditions.checkState(emFactory.isOpen(), "Persistence service was already shut down.");
-    emFactory.close();
+    if (null != emFactory && emFactory.isOpen()) {
+      emFactory.close();
+    }
   }
 
   @Singleton

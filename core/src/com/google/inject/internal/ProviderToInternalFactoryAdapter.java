@@ -17,14 +17,37 @@
 package com.google.inject.internal;
 
 import com.google.inject.Provider;
+import com.google.inject.spi.Dependency;
 
-/** @author crazybob@google.com (Bob Lee) */
-final class ProviderToInternalFactoryAdapter<T> implements Provider<T> {
+/**
+ * A provider that wraps an internal factory in order to pass to Scope instances.
+ *
+ * <p>This differs from the {@code Provider} instances constructed by the {@link InjectorImpl} in 2
+ * ways:
+ *
+ * <ul>
+ *   <li>It always pretends that the binding is linked, to support scoping implicit bindings.
+ *   <li>It throws a slightly different ProvisionException if an error occurs. It doesn't add the
+ *       current Dependency to the provision source stack.
+ * </ul>
+ *
+ * @author crazybob@google.com (Bob Lee)
+ */
+public class ProviderToInternalFactoryAdapter<T> implements Provider<T> {
 
   private final InjectorImpl injector;
-  private final InternalFactory<? extends T> internalFactory;
+  final InternalFactory<? extends T> internalFactory;
 
-  public ProviderToInternalFactoryAdapter(
+  static <T> ProviderToInternalFactoryAdapter<T> create(
+      InjectorImpl injector, InternalFactory<? extends T> internalFactory) {
+    if (InternalFlags.getUseMethodHandlesOption()) {
+      return InternalMethodHandles.makeScopedProvider(internalFactory, injector);
+    }
+
+    return new ProviderToInternalFactoryAdapter<>(injector, internalFactory);
+  }
+
+  protected ProviderToInternalFactoryAdapter(
       InjectorImpl injector, InternalFactory<? extends T> internalFactory) {
     this.injector = injector;
     this.internalFactory = internalFactory;
@@ -34,16 +57,22 @@ final class ProviderToInternalFactoryAdapter<T> implements Provider<T> {
   public T get() {
     InternalContext context = injector.enterContext();
     try {
-      // Always pretend that we are a linked binding, to support
-      // scoping implicit bindings.  If we are not actually a linked
-      // binding, we'll fail properly elsewhere in the chain.
-      T t = internalFactory.get(context, context.getDependency(), true);
-      return t;
+      return doGet(context, context.getDependency());
     } catch (InternalProvisionException e) {
       throw e.toProvisionException();
     } finally {
       context.close();
     }
+  }
+
+  // Exposed so it can be overridden by the generated provider when method handles are enabled.
+  // See InternalMethodHandles.makeScopedProvider.
+  protected T doGet(InternalContext context, Dependency<?> dependency)
+      throws InternalProvisionException {
+    // Always pretend that we are a linked binding, to support
+    // scoping implicit bindings.  If we are not actually a linked
+    // binding, we'll fail properly elsewhere in the chain.
+    return internalFactory.get(context, dependency, true);
   }
 
   /** Exposed for SingletonScope. */

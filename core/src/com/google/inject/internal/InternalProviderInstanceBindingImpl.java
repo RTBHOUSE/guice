@@ -1,13 +1,14 @@
 package com.google.inject.internal;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Key;
 import com.google.inject.Provider;
-import com.google.inject.internal.ProvisionListenerStackCallback.ProvisionCallback;
 import com.google.inject.spi.Dependency;
 import com.google.inject.spi.HasDependencies;
 import com.google.inject.spi.InjectionPoint;
-import com.google.inject.spi.ProviderWithExtensionVisitor;
+import java.lang.invoke.MethodHandle;
 
 /**
  * A {@link ProviderInstanceBindingImpl} for implementing 'native' guice extensions.
@@ -45,6 +46,8 @@ final class InternalProviderInstanceBindingImpl<T> extends ProviderInstanceBindi
         source,
         scopedFactory,
         scoping,
+        // Pass the original factory as the provider instance. A number of checks rely on being able
+        // to downcast this provider to access the original factory.
         originalFactory,
         ImmutableSet.<InjectionPoint>of());
     this.originalFactory = originalFactory;
@@ -58,31 +61,57 @@ final class InternalProviderInstanceBindingImpl<T> extends ProviderInstanceBindi
   public void initialize(final InjectorImpl injector, final Errors errors) throws ErrorsException {
     originalFactory.source = getSource();
     originalFactory.provisionCallback = injector.provisionListenerStore.get(this);
-    // For these kinds of providers, the 'user supplied provider' is really 'guice supplied'
-    // So make our user supplied provider just delegate to the guice supplied one.
-    originalFactory.delegateProvider = getProvider();
     originalFactory.initialize(injector, errors);
+    checkState(
+        injector == originalFactory.injector,
+        "Factory should have already been bound to this injector.");
+    checkState(
+        injector == this.getInjector(),
+        "Binding should be initialized on the same injector that created it.");
+    originalFactory.dependency = Dependency.get(getKey());
   }
 
-  /**
-   * A base factory implementation. Any Factories that delegate to other bindings should use the
-   * {@code CyclicFactory} subclass, but trivial factories can use this one.
-   */
-  abstract static class Factory<T> implements InternalFactory<T>, Provider<T>, HasDependencies {
+  /** A base factory implementation. */
+  abstract static class Factory<T> extends InternalFactory<T>
+      implements Provider<T>, HasDependencies, ProvisionListenerStackCallback.ProvisionCallback<T> {
     private final InitializationTiming initializationTiming;
     private Object source;
-    private Provider<T> delegateProvider;
+    private InjectorImpl injector;
+    private Dependency<?> dependency;
     ProvisionListenerStackCallback<T> provisionCallback;
 
     Factory(InitializationTiming initializationTiming) {
       this.initializationTiming = initializationTiming;
     }
+
+    /**
+     * Exclusively binds this factory to the given injector.
+     *
+     * <p>This is needed since the implementations of this class are used to construct bindings via
+     * `bind(key).toProvider(factory-instance)` and the BindingProcessor tests for this type to find
+     * the 'native factory' implementation. This works well but is a bit ambiguous since users can
+     * also bind these providers to _other_ injectors which can create some confusion as to how
+     * 'initialization' works.
+     *
+     * <p>Thus, the binding processor uses this method to make an 'exclusive' claim on the factory
+     * and prevent other injectors from also binding to it. We synchronize this method but not all
+     * read/writes to `injector` since binding initialization is a single threaded process, we just
+     * need to prevent multiple injectors from racing on the claim.
+     */
+    synchronized boolean bindToInjector(InjectorImpl injector) {
+      if (this.injector == null) {
+        this.injector = injector;
+        return true;
+      }
+      return false;
+    }
+
     /**
      * The binding source.
      *
      * <p>May be useful for augmenting runtime error messages.
      *
-     * <p>Note: this will return {#code null} until {@link #initialize(InjectorImpl, Errors)} has
+     * <p>Note: this will return {@code null} until {@link #initialize(InjectorImpl, Errors)} has
      * already been called.
      */
     final Object getSource() {
@@ -98,12 +127,21 @@ final class InternalProviderInstanceBindingImpl<T> extends ProviderInstanceBindi
 
     @Override
     public final T get() {
-      Provider<T> local = delegateProvider;
-      if (local == null) {
+      var localInjector = injector;
+      var localDependency = dependency;
+      // Check both of these to ensure that we have been 'bound' via `bindToinjector` and
+      // `initialize` has been called on our Binding.
+      if (localInjector == null || localDependency == null) {
         throw new IllegalStateException(
-            "This Provider cannot be used until the Injector has been created.");
+            "This Provider cannot be used until the Injector has been created and this binding has"
+                + " been initialized.");
       }
-      return local.get();
+      // This is an inlined version of InternalFactory.makeDefaultProvider
+      try (InternalContext context = localInjector.enterContext()) {
+        return get(context, localDependency, false);
+      } catch (InternalProvisionException e) {
+        throw e.addSource(localDependency).toProvisionException();
+      }
     }
 
     @Override
@@ -112,16 +150,24 @@ final class InternalProviderInstanceBindingImpl<T> extends ProviderInstanceBindi
       if (provisionCallback == null) {
         return doProvision(context, dependency);
       } else {
-        return provisionCallback.provision(
-            context,
-            new ProvisionCallback<T>() {
-              @Override
-              public T call() throws InternalProvisionException {
-                return doProvision(context, dependency);
-              }
-            });
+        return provisionCallback.provision(context, dependency, this);
       }
     }
+
+    @Override
+    MethodHandleResult makeHandle(LinkageContext context, boolean linked) {
+      return makeCachable(
+          InternalMethodHandles.invokeThroughProvisionCallback(
+              doGetHandle(context), provisionCallback));
+    }
+
+    // Implements ProvisionCallback<T>
+    @Override
+    public final T call(InternalContext context, Dependency<?> dependency)
+        throws InternalProvisionException {
+      return doProvision(context, dependency);
+    }
+
     /**
      * Creates an object to be injected.
      *
@@ -130,66 +176,8 @@ final class InternalProviderInstanceBindingImpl<T> extends ProviderInstanceBindi
      */
     protected abstract T doProvision(InternalContext context, Dependency<?> dependency)
         throws InternalProvisionException;
-  }
 
-  /**
-   * An base factory implementation that can be extended to provide a specialized implementation of
-   * a {@link ProviderWithExtensionVisitor} and also implements {@link InternalFactory}
-   */
-  abstract static class CyclicFactory<T> extends Factory<T> {
-
-    CyclicFactory(InitializationTiming initializationTiming) {
-      super(initializationTiming);
-    }
-
-    @Override
-    public final T get(
-        final InternalContext context, final Dependency<?> dependency, boolean linked)
-        throws InternalProvisionException {
-      final ConstructionContext<T> constructionContext = context.getConstructionContext(this);
-      // We have a circular reference between bindings. Return a proxy.
-      if (constructionContext.isConstructing()) {
-        Class<?> expectedType = dependency.getKey().getTypeLiteral().getRawType();
-        @SuppressWarnings("unchecked")
-        T proxyType =
-            (T) constructionContext.createProxy(context.getInjectorOptions(), expectedType);
-        return proxyType;
-      }
-      // Optimization: Don't go through the callback stack if no one's listening.
-      constructionContext.startConstruction();
-      try {
-        if (provisionCallback == null) {
-          return provision(dependency, context, constructionContext);
-        } else {
-          return provisionCallback.provision(
-              context,
-              new ProvisionCallback<T>() {
-                @Override
-                public T call() throws InternalProvisionException {
-                  return provision(dependency, context, constructionContext);
-                }
-              });
-        }
-      } finally {
-        constructionContext.removeCurrentReference();
-        constructionContext.finishConstruction();
-      }
-    }
-
-    private T provision(
-        Dependency<?> dependency,
-        InternalContext context,
-        ConstructionContext<T> constructionContext)
-        throws InternalProvisionException {
-      try {
-        T t = doProvision(context, dependency);
-        constructionContext.setProxyDelegates(t);
-        return t;
-      } catch (InternalProvisionException ipe) {
-        throw ipe.addSource(getSource());
-      } catch (Throwable t) {
-        throw InternalProvisionException.errorInProvider(t).addSource(getSource());
-      }
-    }
+    /** Creates a method handle that constructs the object to be injected. */
+    protected abstract MethodHandle doGetHandle(LinkageContext context);
   }
 }

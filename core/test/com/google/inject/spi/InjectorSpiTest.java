@@ -24,7 +24,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Logger;
 import junit.framework.TestCase;
 
-/** @author sberlin@gmail.com (Sam Berlin) */
+/**
+ * @author sberlin@gmail.com (Sam Berlin)
+ */
 public class InjectorSpiTest extends TestCase {
 
   public void testExistingBinding() {
@@ -124,7 +126,8 @@ public class InjectorSpiTest extends TestCase {
     }
     assertThat(actualKeys)
         .containsExactly(Key.get(Stage.class), Key.get(Injector.class), Key.get(Logger.class));
-    assertThat(scopes).hasSize(2); // singleton for javax.inject.Singleton & c.g.i.Singleton
+    // singleton for jakarta.inject.Singleton & c.g.i.Singleton
+    assertThat(scopes).hasSize(2);
     assertThat(typeConverters).hasSize(10); // all the built-in converters.
   }
 

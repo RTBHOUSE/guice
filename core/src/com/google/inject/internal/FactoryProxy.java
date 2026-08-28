@@ -25,7 +25,7 @@ import com.google.inject.spi.Dependency;
  * A placeholder which enables us to swap in the real factory once the injector is created. Used for
  * a linked binding, so that getting the linked binding returns the link's factory.
  */
-final class FactoryProxy<T> implements InternalFactory<T>, CreationListener {
+final class FactoryProxy<T> extends InternalFactory<T> implements CreationListener {
 
   private final InjectorImpl injector;
   private final Key<T> key;
@@ -55,12 +55,18 @@ final class FactoryProxy<T> implements InternalFactory<T>, CreationListener {
   @Override
   public T get(InternalContext context, Dependency<?> dependency, boolean linked)
       throws InternalProvisionException {
-    Key<? extends T> localTargetKey = targetKey;
     try {
-      return targetFactory.get(context, dependency, true);
+      return targetFactory.get(context, dependency, /* linked= */ true);
     } catch (InternalProvisionException ipe) {
-      throw ipe.addSource(localTargetKey);
+      throw ipe.addSource(targetKey);
     }
+  }
+
+  @Override
+  MethodHandleResult makeHandle(LinkageContext context, boolean linked) {
+    return makeCachable(
+        InternalMethodHandles.catchInternalProvisionExceptionAndRethrowWithSource(
+            targetFactory.getHandle(context, /* linked= */ true), targetKey));
   }
 
   @Override

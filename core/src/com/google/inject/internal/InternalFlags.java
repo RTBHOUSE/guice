@@ -44,11 +44,20 @@ public final class InternalFlags {
   private static final ColorizeOption COLORIZE_OPTION =
       getSystemOption("guice_colorize_error_messages", ColorizeOption.OFF);
 
+  private static final UseMethodHandlesOption USE_METHOD_HANDLES =
+      getSystemOption("guice_use_method_handles", UseMethodHandlesOption.NO);
+
+  /** The options for using `MethodHandles`. */
+  public enum UseMethodHandlesOption {
+    NO,
+    YES,
+  }
+
   /** The options for Guice stack trace collection. */
   public enum IncludeStackTraceOption {
     /** No stack trace collection */
     OFF,
-    /**  Minimum stack trace collection (Default) */
+    /** Minimum stack trace collection (Default) */
     ONLY_FOR_DECLARING_SOURCE,
   }
 
@@ -161,6 +170,12 @@ public final class InternalFlags {
     return COLORIZE_OPTION.enabled();
   }
 
+  public static boolean getUseMethodHandlesOption() {
+    return USE_METHOD_HANDLES
+            == UseMethodHandlesOption.YES
+        && isBytecodeGenEnabled();
+  }
+
   /**
    * Gets the system option indicated by the specified key; runs as a privileged action.
    *
@@ -197,8 +212,13 @@ public final class InternalFlags {
     } catch (SecurityException e) {
       return secureValue;
     } catch (IllegalArgumentException e) {
-      logger.warning(value + " is not a valid flag value for " + name + ". "
-          + " Values must be one of " + Arrays.asList(enumType.getEnumConstants()));
+      logger.warning(
+          value
+              + " is not a valid flag value for "
+              + name
+              + ". "
+              + " Values must be one of "
+              + Arrays.asList(enumType.getEnumConstants()));
       return defaultValue;
     }
   }

@@ -32,8 +32,8 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Map;
-import javax.persistence.EntityManager;
-import javax.persistence.EntityManagerFactory;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
 import org.aopalliance.intercept.MethodInterceptor;
 import org.aopalliance.intercept.MethodInvocation;
 
@@ -44,11 +44,17 @@ import org.aopalliance.intercept.MethodInvocation;
  */
 public final class JpaPersistModule extends PersistModule {
   private final String jpaUnit;
+  private final JpaPersistOptions options;
 
   public JpaPersistModule(String jpaUnit) {
+    this(jpaUnit, JpaPersistOptions.builder().build());
+  }
+
+  public JpaPersistModule(String jpaUnit, JpaPersistOptions options) {
     Preconditions.checkArgument(
         null != jpaUnit && jpaUnit.length() > 0, "JPA unit name must be a non-empty string.");
     this.jpaUnit = jpaUnit;
+    this.options = options;
   }
 
   private Map<?, ?> properties;
@@ -57,6 +63,7 @@ public final class JpaPersistModule extends PersistModule {
   @Override
   protected void configurePersistence() {
     bindConstant().annotatedWith(Jpa.class).to(jpaUnit);
+    bind(JpaPersistOptions.class).annotatedWith(Jpa.class).toInstance(options);
 
     bind(JpaPersistService.class).in(Singleton.class);
 

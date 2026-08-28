@@ -16,6 +16,7 @@
 
 package com.google.inject;
 
+import static com.google.common.truth.Truth.assertThat;
 import static com.google.inject.Asserts.assertContains;
 import static com.google.inject.name.Names.named;
 import static org.junit.Assert.assertEquals;
@@ -28,7 +29,6 @@ import static org.junit.Assume.assumeTrue;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
-import com.google.common.util.concurrent.Runnables;
 import com.google.inject.internal.Annotations;
 import com.google.inject.internal.InternalFlags;
 import com.google.inject.matcher.Matchers;
@@ -62,15 +62,17 @@ public class BindingTest {
 
   @Test
   public void testExplicitCyclicDependency() {
-    Guice.createInjector(
-            new AbstractModule() {
-              @Override
-              protected void configure() {
-                bind(A.class);
-                bind(B.class);
-              }
-            })
-        .getInstance(A.class);
+    var a =
+        Guice.createInjector(
+                new AbstractModule() {
+                  @Override
+                  protected void configure() {
+                    bind(A.class);
+                    bind(B.class);
+                  }
+                })
+            .getInstance(A.class);
+    assertThat(a.b.a).isSameInstanceAs(a);
   }
 
   static class A { @Inject B b; }
@@ -86,7 +88,7 @@ public class BindingTest {
       bind(Object.class).to(Runnable.class).in(Scopes.SINGLETON);
 
       // Instance.
-      bind(Runnable.class).toInstance(Runnables.doNothing());
+      bind(Runnable.class).toInstance(() -> {});
 
       // Provider instance.
       bind(Foo.class)

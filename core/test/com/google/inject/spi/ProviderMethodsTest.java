@@ -16,6 +16,7 @@
 
 package com.google.inject.spi;
 
+import static com.google.common.truth.Truth.assertThat;
 import static com.google.inject.Asserts.assertContains;
 import static java.lang.annotation.RetentionPolicy.RUNTIME;
 import static org.junit.Assert.assertEquals;
@@ -434,7 +435,7 @@ public class ProviderMethodsTest implements Module {
         element instanceof ProviderInstanceBinding);
 
     ProviderInstanceBinding<?> binding = (ProviderInstanceBinding<?>) element;
-    javax.inject.Provider<?> provider = binding.getUserSuppliedProvider();
+    jakarta.inject.Provider<?> provider = binding.getUserSuppliedProvider();
     assertTrue(provider instanceof ProviderMethod);
     assertEquals(methodsObject, ((ProviderMethod) provider).getInstance());
     assertSame(provider, binding.getProviderInstance());
@@ -634,6 +635,10 @@ public class ProviderMethodsTest implements Module {
 
   @Test
   public void testShareFastClass() {
+    if (InternalFlags.getUseMethodHandlesOption()) {
+      // This test is not relevant for method handles.
+      return;
+    }
     // FastClass is only used when bytecode generation is enabled and this test relies on package
     // access which CHILD loading doesn't have.
     assumeTrue(
@@ -668,6 +673,9 @@ public class ProviderMethodsTest implements Module {
 
   @Test
   public void testShareFastClassWithSuperClass() {
+    if (InternalFlags.getUseMethodHandlesOption()) {
+      return;
+    }
     // FastClass is only used when bytecode generation is enabled and this test relies on package
     // access which CHILD loading doesn't have.
     assumeTrue(
@@ -1099,8 +1107,11 @@ public class ProviderMethodsTest implements Module {
       moduleBinding.getUserSuppliedProvider().get();
       fail();
     } catch (IllegalStateException ise) {
-      assertEquals(
-          "This Provider cannot be used until the Injector has been created.", ise.getMessage());
+      assertThat(ise)
+          .hasMessageThat()
+          .isEqualTo(
+              "This Provider cannot be used until the Injector has been created and this binding"
+                  + " has been initialized.");
     }
   }
 

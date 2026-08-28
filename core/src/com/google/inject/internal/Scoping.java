@@ -160,7 +160,8 @@ public abstract class Scoping {
       };
 
   public static Scoping forAnnotation(final Class<? extends Annotation> scopingAnnotation) {
-    if (scopingAnnotation == Singleton.class || scopingAnnotation == javax.inject.Singleton.class) {
+    if (scopingAnnotation == Singleton.class
+        || scopingAnnotation == jakarta.inject.Singleton.class) {
       return SINGLETON_ANNOTATION;
     }
 
@@ -296,14 +297,14 @@ public abstract class Scoping {
     // ProviderToInternalFactoryAdapter here.  If you change the type make sure to update
     // SingletonScope as well.
     Provider<T> scoped =
-        scope.scope(key, new ProviderToInternalFactoryAdapter<T>(injector, creator));
-    return new InternalFactoryToProviderAdapter<T>(scoped, source);
+        scope.scope(key, ProviderToInternalFactoryAdapter.create(injector, creator));
+    return InternalFactoryToScopedProviderAdapter.create(scope, scoped, source);
   }
 
   /**
    * Replaces annotation scopes with instance scopes using the Injector's annotation-to-instance
    * map. If the scope annotation has no corresponding instance, an error will be added and unscoped
-   * will be retuned.
+   * will be returned.
    */
   static Scoping makeInjectable(Scoping scoping, InjectorImpl injector, Errors errors) {
     Class<? extends Annotation> scopeAnnotation = scoping.getScopeAnnotation();

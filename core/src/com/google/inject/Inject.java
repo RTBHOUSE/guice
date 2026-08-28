@@ -21,6 +21,7 @@ import static java.lang.annotation.ElementType.FIELD;
 import static java.lang.annotation.ElementType.METHOD;
 import static java.lang.annotation.RetentionPolicy.RUNTIME;
 
+import com.google.errorprone.annotations.Keep;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.Target;
@@ -35,7 +36,7 @@ import java.lang.annotation.Target;
  *       The Injector then proceeds to perform field and method injections.
  *   <li>Pre-constructed instances passed to {@link Injector#injectMembers}, {@link
  *       com.google.inject.binder.LinkedBindingBuilder#toInstance(Object)} and {@link
- *       com.google.inject.binder.LinkedBindingBuilder#toProvider(javax.inject.Provider)}. In this
+ *       com.google.inject.binder.LinkedBindingBuilder#toProvider(jakarta.inject.Provider)}. In this
  *       case all constructors are, of course, ignored.
  *   <li>Static fields and methods of classes which any {@link Module} has specifically requested
  *       static injection for, using {@link Binder#requestStaticInjection}.
@@ -49,6 +50,7 @@ import java.lang.annotation.Target;
 @Target({METHOD, CONSTRUCTOR, FIELD})
 @Retention(RUNTIME)
 @Documented
+@Keep
 public @interface Inject {
 
   /**

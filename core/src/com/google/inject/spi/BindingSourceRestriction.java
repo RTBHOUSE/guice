@@ -69,7 +69,7 @@ public final class BindingSourceRestriction {
     }
     return Optional.of(
         String.format(
-            "%nHint: This key is restricted and cannot be bound directly. Restriction explanation:"
+            "\nHint: This key is restricted and cannot be bound directly. Restriction explanation:"
                 + " %s",
             restriction.explanation()));
   }
@@ -113,6 +113,7 @@ public final class BindingSourceRestriction {
           protected ImmutableList<Message> visitOther(Element element) {
             return ImmutableList.of();
           }
+
           // Base case.
           @Override
           public <T> ImmutableList<Message> visit(Binding<T> binding) {
@@ -122,6 +123,7 @@ public final class BindingSourceRestriction {
             }
             return ImmutableList.of();
           }
+
           // Recursive case.
           @Override
           public ImmutableList<Message> visit(PrivateElements privateElements) {
@@ -219,6 +221,7 @@ public final class BindingSourceRestriction {
             }
             return null;
           }
+
           // Recursive case.
           @Override
           public Void visit(PrivateElements privateElements) {
@@ -345,8 +348,11 @@ public final class BindingSourceRestriction {
           Stream.concat(
               annotations, Arrays.stream(clazz.getAnnotatedSuperclass().getAnnotations()));
     }
-    return annotations
-        .map(Annotation::annotationType)
-        .filter(a -> a.isAnnotationPresent(RestrictedBindingSource.Permit.class));
+    @SuppressWarnings("unchecked") // force wildcard alignment
+    Stream<Class<? extends Annotation>> permits =
+        annotations
+            .<Class<? extends Annotation>>map(Annotation::annotationType)
+            .filter(a -> a.isAnnotationPresent(RestrictedBindingSource.Permit.class));
+    return permits;
   }
 }

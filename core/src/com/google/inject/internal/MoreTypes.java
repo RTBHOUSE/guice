@@ -77,8 +77,9 @@ public class MoreTypes {
   /**
    * Returns an type that's appropriate for use in a key.
    *
-   * <p>If the raw type of {@code typeLiteral} is a {@code javax.inject.Provider}, this returns a
-   * {@code com.google.inject.Provider} with the same type parameters.
+   * <p>If the raw type of {@code typeLiteral} is a {@code jakarta.inject.Provider} or {@code
+   * jakarta.inject.Provider}, this returns a {@code com.google.inject.Provider} with the same type
+   * parameters.
    *
    * <p>If the type is a primitive, the corresponding wrapper type will be returned.
    *
@@ -91,11 +92,12 @@ public class MoreTypes {
       throw new ConfigurationException(errors.getMessages());
     }
 
-    if (typeLiteral.getRawType() == javax.inject.Provider.class) {
+    if (
+        typeLiteral.getRawType() == jakarta.inject.Provider.class) {
       ParameterizedType parameterizedType = (ParameterizedType) type;
 
       // the following casts are generally unsafe, but com.google.inject.Provider extends
-      // javax.inject.Provider and is covariant
+      // jakarta.inject.Provider & jakarta.inject.Provider and is covariant
       @SuppressWarnings("unchecked")
       TypeLiteral<T> guiceProviderType =
           (TypeLiteral<T>)
@@ -510,7 +512,7 @@ public class MoreTypes {
 
   /**
    * The WildcardType interface supports multiple upper bounds and multiple lower bounds. We only
-   * support what the Java 6 language needs - at most one bound. If a lower bound is set, the upper
+   * support what the Java 8 language needs - at most one bound. If a lower bound is set, the upper
    * bound must be Object.class.
    */
   public static class WildcardTypeImpl implements WildcardType, Serializable, CompositeType {

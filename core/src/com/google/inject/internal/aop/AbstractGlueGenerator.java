@@ -102,8 +102,8 @@ abstract class AbstractGlueGenerator {
 
   /** Generates a unique name based on the original class name and marker. */
   private static String proxyName(String hostName, String marker, int hash) {
-    int id = ((hash & 0x000FFFFF) | (COUNTER.getAndIncrement() << 20));
-    String proxyName = hostName + marker + id;
+    long id = ((hash & 0x000FFFFF) | (COUNTER.getAndIncrement() << 20));
+    String proxyName = hostName + marker + Long.toHexString(id);
     if (proxyName.startsWith("java/") && !ClassDefining.hasPackageAccess()) {
       proxyName = '$' + proxyName; // can't define java.* glue in same package
     }
@@ -142,8 +142,11 @@ abstract class AbstractGlueGenerator {
       return signature -> {
         try {
           // pass this signature's index into the table function to retrieve the invoker
-          return (BiFunction<Object, Object[], Object>)
-              invokerTable.invokeExact(signatureTable.applyAsInt(signature));
+          @SuppressWarnings("unchecked")
+          var invoker =
+              (BiFunction<Object, Object[], Object>)
+                  invokerTable.invokeExact(signatureTable.applyAsInt(signature));
+          return invoker;
         } catch (Throwable e) {
           throw asIfUnchecked(e);
         }
