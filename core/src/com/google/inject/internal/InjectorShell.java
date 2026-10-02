@@ -19,6 +19,8 @@ package com.google.inject.internal;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.inject.Scopes.SINGLETON;
 import static com.google.inject.internal.GuiceInternal.GUICE_INTERNAL;
+import static com.google.inject.internal.InternalMethodHandles.castReturnToObject;
+import static java.lang.invoke.MethodType.methodType;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
@@ -41,6 +43,8 @@ import com.google.inject.spi.ModuleAnnotatedMethodScannerBinding;
 import com.google.inject.spi.PrivateElements;
 import com.google.inject.spi.ProvisionListenerBinding;
 import com.google.inject.spi.TypeListenerBinding;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.util.List;
 import java.util.Optional;
 import java.util.logging.Logger;
@@ -215,6 +219,10 @@ final class InjectorShell {
       new BindingProcessor(errors, initializer, processedBindingData).process(injector, elements);
       new UntargettedBindingProcessor(errors, processedBindingData).process(injector, elements);
       stopwatch.resetAndLog("Binding creation");
+      // lookups can create jit bindings, so do that early, but after untargeted bindings so that
+      // we leverage those bindings if they exist.
+      new LookupBindingProcessor(errors).process(injector, elements);
+      stopwatch.resetAndLog("lookup binding creation");
 
       new ModuleAnnotatedMethodScannerProcessor(errors).process(injector, elements);
       stopwatch.resetAndLog("Module annotated method scanners creation");
@@ -232,7 +240,6 @@ final class InjectorShell {
 
       return injectorShells;
     }
-
   }
 
   /**
@@ -256,7 +263,8 @@ final class InjectorShell {
                 ImmutableSet.<InjectionPoint>of()));
   }
 
-  private static class InjectorFactory implements InternalFactory<Injector>, Provider<Injector> {
+  private static class InjectorFactory extends InternalFactory<Injector>
+      implements Provider<Injector> {
     private final Injector injector;
 
     private InjectorFactory(Injector injector) {
@@ -271,6 +279,16 @@ final class InjectorShell {
     @Override
     public Injector get() {
       return injector;
+    }
+
+    @Override
+    public Provider<Injector> makeProvider(InjectorImpl injector, Dependency<?> dependency) {
+      return InternalFactory.makeProviderFor(injector, this);
+    }
+
+    @Override
+    MethodHandleResult makeHandle(LinkageContext context, boolean linked) {
+      return makeCachable(InternalMethodHandles.constantFactoryGetHandle(injector));
     }
 
     @Override
@@ -300,18 +318,51 @@ final class InjectorShell {
                 ImmutableSet.<InjectionPoint>of()));
   }
 
-  private static class LoggerFactory implements InternalFactory<Logger>, Provider<Logger> {
+  private static class LoggerFactory extends InternalFactory<Logger> implements Provider<Logger> {
     @Override
     public Logger get(InternalContext context, Dependency<?> dependency, boolean linked) {
-      InjectionPoint injectionPoint = dependency.getInjectionPoint();
-      return injectionPoint == null
-          ? Logger.getAnonymousLogger()
-          : Logger.getLogger(injectionPoint.getMember().getDeclaringClass().getName());
+      return makeLogger(dependency);
     }
 
     @Override
     public Logger get() {
       return Logger.getAnonymousLogger();
+    }
+
+    @Override
+    public Provider<Logger> makeProvider(InjectorImpl injector, Dependency<?> dependency) {
+      return InternalFactory.makeProviderFor(makeLogger(dependency), this);
+    }
+
+    @Override
+    MethodHandleResult makeHandle(LinkageContext context, boolean linked) {
+      return makeCachable(MAKE_LOGGER_MH);
+    }
+
+    private static final MethodHandle MAKE_LOGGER_MH;
+
+    static {
+      try {
+        MAKE_LOGGER_MH =
+            castReturnToObject(
+                MethodHandles.dropArguments(
+                    MethodHandles.lookup()
+                        .findStatic(
+                            LoggerFactory.class,
+                            "makeLogger",
+                            methodType(Logger.class, Dependency.class)),
+                    0,
+                    InternalContext.class));
+      } catch (ReflectiveOperationException e) {
+        throw new LinkageError("Failed to find makeLogger function", e);
+      }
+    }
+
+    private static Logger makeLogger(Dependency<?> dependency) {
+      InjectionPoint injectionPoint = dependency.getInjectionPoint();
+      return injectionPoint == null
+          ? Logger.getAnonymousLogger()
+          : Logger.getLogger(injectionPoint.getMember().getDeclaringClass().getName());
     }
 
     @Override
@@ -323,11 +374,11 @@ final class InjectorShell {
   private static void bindStage(InjectorImpl injector, Stage stage) {
     Key<Stage> key = Key.get(Stage.class);
     InstanceBindingImpl<Stage> stageBinding =
-        new InstanceBindingImpl<Stage>(
+        new InstanceBindingImpl<>(
             injector,
             key,
             SourceProvider.UNKNOWN_SOURCE,
-            new ConstantFactory<Stage>(Initializables.of(stage)),
+            ConstantFactory.create(stage, SourceProvider.UNKNOWN_SOURCE),
             ImmutableSet.<InjectionPoint>of(),
             stage);
     injector.getBindingData().putBinding(key, stageBinding);
@@ -338,7 +389,7 @@ final class InjectorShell {
     public void configure(Binder binder) {
       binder = binder.withSource(SourceProvider.UNKNOWN_SOURCE);
       binder.bindScope(Singleton.class, SINGLETON);
-      binder.bindScope(javax.inject.Singleton.class, SINGLETON);
+      binder.bindScope(jakarta.inject.Singleton.class, SINGLETON);
     }
   }
 

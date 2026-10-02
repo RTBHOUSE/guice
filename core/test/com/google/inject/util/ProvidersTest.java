@@ -19,7 +19,7 @@ package com.google.inject.util;
 import com.google.common.base.Objects;
 import com.google.common.testing.EqualsTester;
 import com.google.inject.Provider;
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 import junit.framework.TestCase;
 
 /**
@@ -51,19 +51,19 @@ public class ProvidersTest extends TestCase {
   public void testGuicifyEquality() {
     new EqualsTester()
         .addEqualityGroup(
-            Providers.guicify(new JavaxProvider(10)), Providers.guicify(new JavaxProvider(10)))
+            Providers.guicify(new JakartaProvider(10)), Providers.guicify(new JakartaProvider(10)))
         .addEqualityGroup(
-            Providers.guicify(new JavaxProvider(11)), Providers.guicify(new JavaxProvider(11)))
+            Providers.guicify(new JakartaProvider(11)), Providers.guicify(new JakartaProvider(11)))
         .addEqualityGroup(
-            Providers.guicify(new JavaxProviderWithDependencies()),
-            Providers.guicify(new JavaxProviderWithDependencies()))
+            Providers.guicify(new JakartaProviderWithDependencies()),
+            Providers.guicify(new JakartaProviderWithDependencies()))
         .testEquals();
   }
 
-  private static class JavaxProvider implements javax.inject.Provider<Integer> {
+  private static class JakartaProvider implements jakarta.inject.Provider<Integer> {
     private final int value;
 
-    public JavaxProvider(int value) {
+    public JakartaProvider(int value) {
       this.value = value;
     }
 
@@ -79,11 +79,11 @@ public class ProvidersTest extends TestCase {
 
     @Override
     public boolean equals(Object obj) {
-      return (obj instanceof JavaxProvider) && (value == ((JavaxProvider) obj).value);
+      return (obj instanceof JakartaProvider) && (value == ((JakartaProvider) obj).value);
     }
   }
 
-  private static class JavaxProviderWithDependencies implements javax.inject.Provider<Integer> {
+  private static class JakartaProviderWithDependencies implements jakarta.inject.Provider<Integer> {
     private int value;
 
     @Inject
@@ -103,7 +103,7 @@ public class ProvidersTest extends TestCase {
 
     @Override
     public boolean equals(Object obj) {
-      return (obj instanceof JavaxProviderWithDependencies);
+      return (obj instanceof JakartaProviderWithDependencies);
     }
   }
 }

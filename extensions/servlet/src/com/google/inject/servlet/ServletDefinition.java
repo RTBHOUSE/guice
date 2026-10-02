@@ -33,15 +33,15 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
-import javax.servlet.ServletConfig;
-import javax.servlet.ServletContext;
-import javax.servlet.ServletException;
-import javax.servlet.ServletRequest;
-import javax.servlet.ServletResponse;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletRequestWrapper;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.ServletConfig;
+import jakarta.servlet.ServletContext;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
+import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * An internal representation of a servlet definition mapped to a particular URI pattern. Also
@@ -212,12 +212,15 @@ class ServletDefinition implements ProviderWithExtensionVisitor<ServletDefinitio
               String servletPath = getServletPath();
               int servletPathLength = servletPath.length();
               String requestUri = getRequestURI();
-              pathInfo = requestUri.substring(getContextPath().length()).replaceAll("[/]{2,}", "/");
+              String contextPath = getContextPath();
+              // https://github.com/google/guice/issues/1655, contextPath is occasionally null
+              int contextPathLength = contextPath != null ? contextPath.length() : 0;
+              pathInfo = requestUri.substring(contextPathLength).replaceAll("[/]{2,}", "/");
               // See: https://github.com/google/guice/issues/372
               if (pathInfo.startsWith(servletPath)) {
                 pathInfo = pathInfo.substring(servletPathLength);
-                // Corner case: when servlet path & request path match exactly (without trailing '/'),
-                // then pathinfo is null.
+                // Corner case: when servlet path & request path match exactly
+                // (without trailing '/'), then pathinfo is null.
                 if (pathInfo.isEmpty() && servletPathLength > 0) {
                   pathInfo = null;
                 } else {
@@ -258,7 +261,7 @@ class ServletDefinition implements ProviderWithExtensionVisitor<ServletDefinitio
           public String getPathTranslated() {
             final String info = getPathInfo();
 
-            return (null == info) ? null : getRealPath(info);
+            return (null == info) ? null : getServletContext().getRealPath(info);
           }
 
           // Memoizer pattern.

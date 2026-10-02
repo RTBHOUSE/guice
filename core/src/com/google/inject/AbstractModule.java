@@ -53,7 +53,7 @@ import org.aopalliance.intercept.MethodInterceptor;
  */
 public abstract class AbstractModule implements Module {
 
-  Binder binder;
+  private Binder binder;
 
   @Override
   public final synchronized void configure(Binder builder) {
@@ -130,6 +130,14 @@ public abstract class AbstractModule implements Module {
    */
   protected void requestInjection(Object instance) {
     binder().requestInjection(instance);
+  }
+
+  /**
+   * @see Binder#requestInjection(TypeLiteral, Object)
+   * @since 6.0
+   */
+  protected <T> void requestInjection(TypeLiteral<T> type, T instance) {
+    binder().requestInjection(type, instance);
   }
 
   /** @see Binder#requestStaticInjection(Class[]) */

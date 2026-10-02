@@ -66,7 +66,7 @@ final class ChildClassDefiner implements ClassDefiner {
   /** Creates a child loader for the given host loader */
   static ChildLoader childLoader(ClassLoader hostLoader) {
     logger.fine("Creating a child loader for " + hostLoader);
-    return doPrivileged(() -> new ChildLoader(hostLoader));
+    return doPrivileged(() -> hostLoader == null ? new ChildLoader() : new ChildLoader(hostLoader));
   }
 
   /** Custom class loader that grants access to defineClass */

@@ -16,6 +16,8 @@
 
 package com.google.inject.persist.jpa;
 
+import static org.junit.Assert.assertThrows;
+
 import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
@@ -24,12 +26,15 @@ import com.google.inject.persist.Transactional;
 import com.google.inject.persist.UnitOfWork;
 import java.io.IOException;
 import java.util.Date;
-import javax.persistence.EntityManager;
-import javax.persistence.EntityManagerFactory;
-import javax.persistence.NoResultException;
+import jakarta.inject.Provider;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
+import jakarta.persistence.NoResultException;
 import junit.framework.TestCase;
 
-/** @author Dhanji R. Prasanna (dhanji@gmail.com) */
+/**
+ * @author Dhanji R. Prasanna (dhanji@gmail.com)
+ */
 
 public class ManagedLocalTransactionsTest extends TestCase {
   private Injector injector;
@@ -41,7 +46,7 @@ public class ManagedLocalTransactionsTest extends TestCase {
   public void setUp() {
     injector = Guice.createInjector(new JpaPersistModule("testUnit"));
 
-    //startup persistence
+    // startup persistence
     injector.getInstance(PersistService.class).start();
   }
 
@@ -54,10 +59,11 @@ public class ManagedLocalTransactionsTest extends TestCase {
   public void testSimpleTransaction() {
     injector.getInstance(TransactionalObject.class).runOperationInTxn();
 
+    injector.getInstance(UnitOfWork.class).begin();
     EntityManager em = injector.getInstance(EntityManager.class);
     assertFalse("txn was not closed by transactional service", em.getTransaction().isActive());
 
-    //test that the data has been stored
+    // test that the data has been stored
     Object result =
         em.createQuery("from JpaTestEntity where text = :text")
             .setParameter("text", UNIQUE_TEXT)
@@ -76,10 +82,11 @@ public class ManagedLocalTransactionsTest extends TestCase {
     JpaTestEntity entity =
         injector.getInstance(TransactionalObject.class).runOperationInTxnWithMerge();
 
+    injector.getInstance(UnitOfWork.class).begin();
     EntityManager em = injector.getInstance(EntityManager.class);
     assertFalse("txn was not closed by transactional service", em.getTransaction().isActive());
 
-    //test that the data has been stored
+    // test that the data has been stored
     assertTrue("Em was closed after txn!", em.isOpen());
 
     Object result =
@@ -100,79 +107,113 @@ public class ManagedLocalTransactionsTest extends TestCase {
     try {
       injector.getInstance(TransactionalObject.class).runOperationInTxnThrowingChecked();
     } catch (IOException e) {
-      //ignore
+      // ignore
       injector.getInstance(UnitOfWork.class).end();
     }
 
+    injector.getInstance(UnitOfWork.class).begin();
     EntityManager em = injector.getInstance(EntityManager.class);
 
     assertFalse(
         "Previous EM was not closed by transactional service (rollback didnt happen?)",
         em.getTransaction().isActive());
 
-    //test that the data has been stored
-    try {
-      Object result =
-          em.createQuery("from JpaTestEntity where text = :text")
-              .setParameter("text", TRANSIENT_UNIQUE_TEXT)
-              .getSingleResult();
-      injector.getInstance(UnitOfWork.class).end();
-      fail("a result was returned! rollback sure didnt happen!!!");
-    } catch (NoResultException e) {
-    }
+    // test that the data has been stored
+    assertThrows(
+        NoResultException.class,
+        () ->
+            em.createQuery("from JpaTestEntity where text = :text")
+                .setParameter("text", TRANSIENT_UNIQUE_TEXT)
+                .getSingleResult());
+    injector.getInstance(UnitOfWork.class).end();
   }
 
   public void testSimpleTransactionRollbackOnUnchecked() {
     try {
       injector.getInstance(TransactionalObject.class).runOperationInTxnThrowingUnchecked();
     } catch (RuntimeException re) {
-      //ignore
+      // ignore
       injector.getInstance(UnitOfWork.class).end();
     }
 
+    injector.getInstance(UnitOfWork.class).begin();
     EntityManager em = injector.getInstance(EntityManager.class);
     assertFalse(
         "Session was not closed by transactional service (rollback didnt happen?)",
         em.getTransaction().isActive());
 
-    try {
-      Object result =
-          em.createQuery("from JpaTestEntity where text = :text")
-              .setParameter("text", TRANSIENT_UNIQUE_TEXT)
-              .getSingleResult();
-      injector.getInstance(UnitOfWork.class).end();
-      fail("a result was returned! rollback sure didnt happen!!!");
-    } catch (NoResultException e) {
-    }
+    assertThrows(
+        NoResultException.class,
+        () ->
+            em.createQuery("from JpaTestEntity where text = :text")
+                .setParameter("text", TRANSIENT_UNIQUE_TEXT)
+                .getSingleResult());
+    injector.getInstance(UnitOfWork.class).end();
+  }
+
+  public void testSimpleTransactionRollbackPerformedManuallyWithoutException() {
+    injector.getInstance(TransactionalObject.class).runOperationInTxnWithManualRollback();
+
+    injector.getInstance(UnitOfWork.class).begin();
+    EntityManager em = injector.getInstance(EntityManager.class);
+    assertFalse(
+        "Session was not closed by transactional service (rollback didnt happen?)",
+        em.getTransaction().isActive());
+
+    assertThrows(
+        NoResultException.class,
+        () ->
+            em.createQuery("from JpaTestEntity where text = :text")
+                .setParameter("text", TRANSIENT_UNIQUE_TEXT)
+                .getSingleResult());
+    injector.getInstance(UnitOfWork.class).end();
+  }
+
+  public void testSimpleTransactionRollbackOnlySetWithoutException() {
+    injector.getInstance(TransactionalObject.class).runOperationInTxnWithRollbackOnlySet();
+
+    injector.getInstance(UnitOfWork.class).begin();
+    EntityManager em = injector.getInstance(EntityManager.class);
+    assertFalse(
+        "Session was not closed by transactional service (rollback didnt happen?)",
+        em.getTransaction().isActive());
+
+    assertThrows(
+        NoResultException.class,
+        () ->
+            em.createQuery("from JpaTestEntity where text = :text")
+                .setParameter("text", TRANSIENT_UNIQUE_TEXT)
+                .getSingleResult());
+    injector.getInstance(UnitOfWork.class).end();
   }
 
   public static class TransactionalObject {
-    private final EntityManager em;
+    private final Provider<EntityManager> emProvider;
 
     @Inject
-    public TransactionalObject(EntityManager em) {
-      this.em = em;
+    public TransactionalObject(Provider<EntityManager> emProvider) {
+      this.emProvider = emProvider;
     }
 
     @Transactional
     public void runOperationInTxn() {
       JpaTestEntity entity = new JpaTestEntity();
       entity.setText(UNIQUE_TEXT);
-      em.persist(entity);
+      emProvider.get().persist(entity);
     }
 
     @Transactional
     public JpaTestEntity runOperationInTxnWithMerge() {
       JpaTestEntity entity = new JpaTestEntity();
       entity.setText(UNIQUE_TEXT_MERGE);
-      return em.merge(entity);
+      return emProvider.get().merge(entity);
     }
 
     @Transactional(rollbackOn = IOException.class)
     public void runOperationInTxnThrowingChecked() throws IOException {
       JpaTestEntity entity = new JpaTestEntity();
       entity.setText(TRANSIENT_UNIQUE_TEXT);
-      em.persist(entity);
+      emProvider.get().persist(entity);
 
       throw new IOException();
     }
@@ -181,9 +222,27 @@ public class ManagedLocalTransactionsTest extends TestCase {
     public void runOperationInTxnThrowingUnchecked() {
       JpaTestEntity entity = new JpaTestEntity();
       entity.setText(TRANSIENT_UNIQUE_TEXT);
-      em.persist(entity);
+      emProvider.get().persist(entity);
 
       throw new IllegalStateException();
+    }
+
+    @Transactional
+    public void runOperationInTxnWithManualRollback() {
+      JpaTestEntity entity = new JpaTestEntity();
+      entity.setText(TRANSIENT_UNIQUE_TEXT);
+      emProvider.get().persist(entity);
+
+      emProvider.get().getTransaction().rollback();
+    }
+
+    @Transactional
+    public void runOperationInTxnWithRollbackOnlySet() {
+      JpaTestEntity entity = new JpaTestEntity();
+      entity.setText(TRANSIENT_UNIQUE_TEXT);
+      emProvider.get().persist(entity);
+
+      emProvider.get().getTransaction().setRollbackOnly();
     }
   }
 }

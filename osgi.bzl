@@ -1,5 +1,7 @@
 """ Custom rule to generate OSGi Manifest """
 
+load("@rules_java//java:defs.bzl", "JavaInfo")
+
 def _osgi_jar_impl(ctx):
     output = ctx.outputs.osgi_jar.path
     pom_version = ctx.var.get("pom_version", "LOCAL-SNAPSHOT")
@@ -19,6 +21,7 @@ def _osgi_jar_impl(ctx):
     args.add("--input_jar", input_jar.path)
 
     ctx.actions.run(
+        mnemonic = "OsgiJar",
         inputs = [input_jar] + classpath_jars.to_list(),
         executable = ctx.executable._osgi_wrapper_exe,
         arguments = [args],

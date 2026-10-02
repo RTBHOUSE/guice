@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 Google Inc.
+ * Copyright (C) 2023 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,21 +16,19 @@
 
 package com.google.inject.internal;
 
-/** @author jessewilson@google.com (Jesse Wilson) */
-final class Initializables {
+import com.google.common.collect.ImmutableSet;
 
-  /** Returns an initializable for an instance that requires no initialization. */
-  static <T> Initializable<T> of(final T instance) {
-    return new Initializable<T>() {
-      @Override
-      public T get() {
-        return instance;
-      }
+/** Returns internal classes that should be skipped when calculating sources. */
+public final class InternalClassesToSkipSources {
 
-      @Override
-      public String toString() {
-        return String.valueOf(instance);
-      }
-    };
+  private InternalClassesToSkipSources() {}
+
+  public static ImmutableSet<Class<?>> classesToSkipSources() {
+    return ImmutableSet.of(
+        RealMapBinder.class,
+        RealMapBinder.MultimapBinder.class,
+        RealMultibinder.class,
+        RealOptionalBinder.class,
+        ProviderMethodsModule.class);
   }
 }

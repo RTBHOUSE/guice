@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 Google Inc.
+ * Copyright (C) 2023 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,17 +33,17 @@ import com.google.inject.name.Names;
 import com.google.inject.spi.Dependency;
 import com.google.inject.spi.HasDependencies;
 import com.google.inject.util.Providers;
+import jakarta.inject.Inject;
+import jakarta.inject.Named;
+import jakarta.inject.Provider;
+import jakarta.inject.Qualifier;
+import jakarta.inject.Singleton;
 import java.lang.annotation.Annotation;
 import java.lang.annotation.Retention;
 import java.util.Set;
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Provider;
-import javax.inject.Qualifier;
-import javax.inject.Singleton;
 import junit.framework.TestCase;
 
-public class Jsr330Test extends TestCase {
+public class JakartaTest extends TestCase {
 
   private final B b = new B();
   private final C c = new C();
@@ -212,7 +212,7 @@ public class Jsr330Test extends TestCase {
           });
       fail();
     } catch (CreationException expected) {
-      assertContains(expected.getMessage(), "Injected field Jsr330Test$L.b cannot be final.");
+      assertContains(expected.getMessage(), "Injected field JakartaTest$L.b cannot be final.");
     }
   }
 
@@ -228,7 +228,8 @@ public class Jsr330Test extends TestCase {
       fail();
     } catch (CreationException expected) {
       assertContains(
-          expected.getMessage(), "Injected method Jsr330Test$AbstractM.setB() cannot be abstract.");
+          expected.getMessage(),
+          "Injected method JakartaTest$AbstractM.setB() cannot be abstract.");
     }
   }
 
@@ -244,7 +245,7 @@ public class Jsr330Test extends TestCase {
       fail();
     } catch (CreationException expected) {
       assertContains(
-          expected.getMessage(), "Injected method Jsr330Test$N.setB() cannot declare type ");
+          expected.getMessage(), "Injected method JakartaTest$N.setB() cannot declare type ");
     }
   }
 
@@ -258,34 +259,36 @@ public class Jsr330Test extends TestCase {
         });
   }
 
-  /**
-   * This test verifies that we can compile bindings to provider instances whose compile-time type
-   * implements javax.inject.Provider but not com.google.inject.Provider. For binary compatibility,
-   * we don't (and won't) support binding to instances of javax.inject.Provider.
-   */
-  public void testBindProviderClass() {
-    Injector injector =
-        Guice.createInjector(
-            new AbstractModule() {
-              @Override
-              protected void configure() {
-                bind(B.class).toProvider(BProvider.class);
-                bind(B.class).annotatedWith(Names.named("1")).toProvider(BProvider.class);
-                bind(B.class).annotatedWith(Names.named("2")).toProvider(Key.get(BProvider.class));
-                bind(B.class)
-                    .annotatedWith(Names.named("3"))
-                    .toProvider(TypeLiteral.get(BProvider.class));
-              }
-            });
+  // TODO(sameb): Uncomment this when Guice supports toProvider on jakarta.inject.Provider types.
+  // /**
+  //  * This test verifies that we can compile bindings to provider instances whose compile-time
+  // type
+  //  * implements jakarta.inject.Provider but not com.google.inject.Provider
+  //  */
+  // public void testBindProviderClass() {
+  //   Injector injector =
+  //       Guice.createInjector(
+  //           new AbstractModule() {
+  //             @Override
+  //             protected void configure() {
+  //               bind(B.class).toProvider(BProvider.class);
+  //               bind(B.class).annotatedWith(Names.named("1")).toProvider(BProvider.class);
+  //
+  // bind(B.class).annotatedWith(Names.named("2")).toProvider(Key.get(BProvider.class));
+  //               bind(B.class)
+  //                   .annotatedWith(Names.named("3"))
+  //                   .toProvider(TypeLiteral.get(BProvider.class));
+  //             }
+  //           });
+  //
+  //   injector.getInstance(Key.get(B.class));
+  //   injector.getInstance(Key.get(B.class, Names.named("1")));
+  //   injector.getInstance(Key.get(B.class, Names.named("2")));
+  //   injector.getInstance(Key.get(B.class, Names.named("3")));
+  // }
 
-    injector.getInstance(Key.get(B.class));
-    injector.getInstance(Key.get(B.class, Names.named("1")));
-    injector.getInstance(Key.get(B.class, Names.named("2")));
-    injector.getInstance(Key.get(B.class, Names.named("3")));
-  }
-
-  public void testGuicify330Provider() {
-    Provider<String> jsr330Provider =
+  public void testGuicifyJakartaProvider() {
+    Provider<String> jakartaProvider =
         new Provider<String>() {
           @Override
           public String get() {
@@ -294,12 +297,12 @@ public class Jsr330Test extends TestCase {
 
           @Override
           public String toString() {
-            return "jsr330Provider";
+            return "jakartaProvider";
           }
         };
 
-    com.google.inject.Provider<String> guicified = Providers.guicify(jsr330Provider);
-    assertEquals("guicified(jsr330Provider)", guicified.toString());
+    com.google.inject.Provider<String> guicified = Providers.guicify(jakartaProvider);
+    assertEquals("guicified(jakartaProvider)", guicified.toString());
     assertEquals("A", guicified.get());
 
     // when you guicify the Guice-friendly, it's a no-op
@@ -309,7 +312,7 @@ public class Jsr330Test extends TestCase {
   }
 
   public void testGuicifyWithDependencies() {
-    Provider<String> jsr330Provider =
+    Provider<String> jakartaProvider =
         new Provider<String>() {
           @Inject double d;
           int i;
@@ -325,10 +328,10 @@ public class Jsr330Test extends TestCase {
           }
         };
 
-    final com.google.inject.Provider<String> guicified = Providers.guicify(jsr330Provider);
+    final com.google.inject.Provider<String> guicified = Providers.guicify(jakartaProvider);
     assertTrue(guicified instanceof HasDependencies);
     Set<Dependency<?>> actual = ((HasDependencies) guicified).getDependencies();
-    validateDependencies(actual, jsr330Provider.getClass());
+    validateDependencies(actual, jakartaProvider.getClass());
 
     Injector injector =
         Guice.createInjector(
@@ -343,7 +346,7 @@ public class Jsr330Test extends TestCase {
 
     Binding<String> binding = injector.getBinding(String.class);
     assertEquals("2.0-1", binding.getProvider().get());
-    validateDependencies(actual, jsr330Provider.getClass());
+    validateDependencies(actual, jakartaProvider.getClass());
   }
 
   private void validateDependencies(Set<Dependency<?>> actual, Class<?> owner) {
@@ -452,7 +455,7 @@ public class Jsr330Test extends TestCase {
     }
   }
 
-  @javax.inject.Scope
+  @jakarta.inject.Scope
   @Retention(RUNTIME)
   @interface TestScoped {}
 
@@ -497,20 +500,20 @@ public class Jsr330Test extends TestCase {
   }
 
   static class L {
-    @SuppressWarnings("InjectJavaxInjectOnFinalField")
+    @SuppressWarnings("InjectJakartaInjectOnFinalField")
     @Inject
     final B b = null;
   }
 
   abstract static class AbstractM {
-    @SuppressWarnings("JavaxInjectOnAbstractMethod")
+    @SuppressWarnings("JakartaInjectOnAbstractMethod")
     @Inject
     abstract void setB(B b);
   }
 
   static class M extends AbstractM {
     @Override
-    @SuppressWarnings("OverridesJavaxInjectableMethod")
+    @SuppressWarnings("OverridesJakartaInjectableMethod")
     void setB(B b) {}
   }
 

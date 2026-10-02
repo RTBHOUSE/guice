@@ -1,21 +1,23 @@
 # Copyright 2014 Google Inc.  All rights reserved.
 # Author: eatnumber1@google.com (Russ Harmon)
 load("@rules_java//java:defs.bzl", "java_library")
+load("//:build_defs.bzl", "JAVAC_OPTS")
 load("//:test_defs.bzl", "guice_test_suites")
 
-package(default_testonly = 1)
+package(
+    default_testonly = 1,
+)
 
 java_library(
     name = "tests",
     srcs = glob(["*.java"]),
-    plugins = [
-    ],
+    javacopts = JAVAC_OPTS,
     deps = [
         "//core/src/com/google/inject",
         "//core/test/com/google/inject:testsupport",
         "//extensions/testlib/src/com/google/inject/testing/fieldbinder",
         "//third_party/java/guava/collect",
-        "//third_party/java/jsr330_inject",
+        "//third_party/java/jakarta_inject",
         "//third_party/java/junit",
     ],
 )

@@ -6,7 +6,7 @@
   <parent>
     <groupId>com.google.inject</groupId>
     <artifactId>guice-parent</artifactId>
-    <version>5.1.1-SNAPSHOT</version>
+    <version>7.0.1-SNAPSHOT</version>
   </parent>
 
   <packaging>pom</packaging>
@@ -25,7 +25,8 @@
     <module>persist</module>
     <module>servlet</module>
     <module>spring</module>
-    <module>struts2</module>
+    <!-- struts2 doesn't support jakarta.servlet yet, so we can't include it
+    <module>struts2</module> -->
     <module>testlib</module>
     <module>throwingproviders</module>
   </modules>
@@ -77,12 +78,9 @@
       <plugin>
         <artifactId>maven-remote-resources-plugin</artifactId>
       </plugin>
-      <!--
-       | Enable Java6 conformance checks
-      -->
       <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>animal-sniffer-maven-plugin</artifactId>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
       </plugin>
       <!--
        | Add OSGi manifest: extensions are fragments that attach to the core
@@ -92,7 +90,7 @@
         <artifactId>maven-bundle-plugin</artifactId>
         <configuration>
           <instructions>
-            <Fragment-Host>com.google.inject</Fragment-Host>
+            <Fragment-Host>com.google.inject;bundle-version=$(version_cleanup;${project.version})</Fragment-Host>
           </instructions>
         </configuration>
       </plugin>

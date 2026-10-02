@@ -16,6 +16,12 @@
 
 package com.google.inject.internal;
 
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.inject.internal.InternalMethodHandles.BIFUNCTION_APPLY_HANDLE;
+import static com.google.inject.internal.InternalMethodHandles.castReturnTo;
+import static com.google.inject.internal.InternalMethodHandles.castReturnToObject;
+import static java.lang.invoke.MethodType.methodType;
+
 import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Binder;
@@ -33,6 +39,8 @@ import com.google.inject.spi.ProviderWithExtensionVisitor;
 import com.google.inject.spi.ProvidesMethodBinding;
 import com.google.inject.spi.ProvidesMethodTargetVisitor;
 import java.lang.annotation.Annotation;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -44,7 +52,7 @@ import java.util.function.BiFunction;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  */
-public abstract class ProviderMethod<T> extends InternalProviderInstanceBindingImpl.CyclicFactory<T>
+public abstract class ProviderMethod<T> extends InternalProviderInstanceBindingImpl.Factory<T>
     implements HasDependencies, ProvidesMethodBinding<T>, ProviderWithExtensionVisitor<T> {
 
   /**
@@ -63,6 +71,25 @@ public abstract class ProviderMethod<T> extends InternalProviderInstanceBindingI
       boolean skipFastClassGeneration,
       Annotation annotation) {
     int modifiers = method.getModifiers();
+    if (InternalFlags.getUseMethodHandlesOption()) {
+      // `unreflect` fails if the method is not public and there is either a security manager
+      // blocking access (very rare) or application has set up modules that are not open.
+      // In that case we fall back to fast class generation.
+      // TODO(lukes): In theory we could use a similar approach to the 'HiddenClassDefiner' and
+      // use Unsafe to access the trusted MethodHandles.Lookup object which allows us to access all
+      // methods.  However, this is a dangerous and long term unstable approach. The better approach
+      // is to add a new API that allows users to pass us an appropriate MethodHandles.Lookup
+      // object.  These objects act like `capabilities` which users can use to pass private access
+      // to us.  e.g. `Binder.grantAccess(MethodHandles.Lookup lookup)` could allow callers to pass
+      // us a lookup object that allows us to access all their methods. Then they could mark their
+      // methods as private and still hit this case.
+      MethodHandle target = InternalMethodHandles.unreflect(method);
+      if (target != null) {
+        return new MethodHandleProviderMethod<T>(
+            key, method, instance, dependencies, scopeAnnotation, annotation, target);
+      }
+      // fall through to fast class generation.
+    }
     if (InternalFlags.isBytecodeGenEnabled() && !skipFastClassGeneration) {
       try {
         BiFunction<Object, Object[], Object> fastMethod = BytecodeGen.fastMethod(method);
@@ -92,13 +119,16 @@ public abstract class ProviderMethod<T> extends InternalProviderInstanceBindingI
   private final ImmutableSet<Dependency<?>> dependencies;
   private final boolean exposed;
   private final Annotation annotation;
+  private int circularFactoryId;
 
   /**
    * Set by {@link #initialize(InjectorImpl, Errors)} so it is always available prior to injection.
    */
   private SingleParameterInjector<?>[] parameterInjectors;
 
-  /** @param method the method to invoke. Its return type must be the same type as {@code key}. */
+  /**
+   * @param method the method to invoke. Its return type must be the same type as {@code key}.
+   */
   ProviderMethod(
       Key<T> key,
       Method method,
@@ -162,28 +192,81 @@ public abstract class ProviderMethod<T> extends InternalProviderInstanceBindingI
   @Override
   void initialize(InjectorImpl injector, Errors errors) throws ErrorsException {
     parameterInjectors = injector.getParametersInjectors(dependencies.asList(), errors);
+    circularFactoryId = injector.circularFactoryIdFactory.next();
+  }
+
+  @Override
+  public final T get(final InternalContext context, final Dependency<?> dependency, boolean linked)
+      throws InternalProvisionException {
+    @SuppressWarnings("unchecked")
+    T result = (T) context.tryStartConstruction(circularFactoryId, dependency);
+    if (result != null) {
+      // We have a circular reference between bindings. Return a proxy.
+      return result;
+    }
+    return super.get(context, dependency, linked);
   }
 
   @Override
   protected T doProvision(InternalContext context, Dependency<?> dependency)
       throws InternalProvisionException {
+    T t = null;
     try {
-      T t = doProvision(SingleParameterInjector.getAll(context, parameterInjectors));
+      t = doProvision(SingleParameterInjector.getAll(context, parameterInjectors));
       if (t == null && !dependency.isNullable()) {
         InternalProvisionException.onNullInjectedIntoNonNullableDependency(getMethod(), dependency);
       }
       return t;
     } catch (IllegalAccessException e) {
       throw new AssertionError(e);
+    } catch (InternalProvisionException e) {
+      throw e.addSource(getSource());
     } catch (InvocationTargetException userException) {
       Throwable cause = userException.getCause() != null ? userException.getCause() : userException;
       throw InternalProvisionException.errorInProvider(cause).addSource(getSource());
+    } catch (Throwable unexpected) {
+      throw InternalProvisionException.errorInProvider(unexpected).addSource(getSource());
+    } finally {
+      context.finishConstruction(circularFactoryId, t);
     }
   }
 
   /** Extension point for our subclasses to implement the provisioning strategy. */
   abstract T doProvision(Object[] parameters)
       throws IllegalAccessException, InvocationTargetException;
+
+  @Override
+  MethodHandleResult makeHandle(LinkageContext context, boolean linked) {
+    MethodHandleResult result = super.makeHandle(context, linked);
+    checkState(result.cachability == MethodHandleResult.Cachability.ALWAYS);
+    // Handle circular proxies.
+    return makeCachable(
+        InternalMethodHandles.tryStartConstruction(result.methodHandle, circularFactoryId));
+  }
+
+  /** Creates a method handle that constructs the object to be injected. */
+  @Override
+  protected final MethodHandle doGetHandle(LinkageContext context) {
+    MethodHandle handle =
+        doProvisionHandle(SingleParameterInjector.getAllHandles(context, parameterInjectors));
+    InternalMethodHandles.checkHasElementFactoryType(handle);
+    // add a dependency parameter so `nullCheckResult` can use it.
+    handle = MethodHandles.dropArguments(handle, 1, Dependency.class);
+    handle = InternalMethodHandles.nullCheckResult(handle, getMethod());
+    // catch everything else and rethrow as an error in provider.
+    handle =
+        InternalMethodHandles.catchThrowableInProviderAndRethrowWithSource(handle, getSource());
+    handle = InternalMethodHandles.finishConstruction(handle, circularFactoryId);
+
+    return handle;
+  }
+
+  /**
+   * Extension point for our subclasses to implement the provisioning strategy.
+   *
+   * <p>Should return a handle with the signature {@code (InternalContext) -> Object}
+   */
+  abstract MethodHandle doProvisionHandle(MethodHandle[] parameters);
 
   @Override
   public Set<Dependency<?>> getDependencies() {
@@ -233,7 +316,6 @@ public abstract class ProviderMethod<T> extends InternalProviderInstanceBindingI
     return Objects.hashCode(method, annotation);
   }
 
-
   /**
    * A {@link ProviderMethod} implementation that uses bytecode generation to invoke the provider
    * method.
@@ -262,6 +344,23 @@ public abstract class ProviderMethod<T> extends InternalProviderInstanceBindingI
         throw new InvocationTargetException(e); // match JDK reflection behaviour
       }
     }
+
+    @Override
+    MethodHandle doProvisionHandle(MethodHandle[] parameters) {
+      // We can hit this case if the method is package private and we are using bytecode gen but
+      // a security manager is installed that blocks access to `setAccessible`.
+      // (Object[]) -> Object
+      var apply =
+          MethodHandles.insertArguments(BIFUNCTION_APPLY_HANDLE.bindTo(fastMethod), 0, instance)
+              // Cast the parameter type to be an Object array
+              .asType(methodType(Object.class, Object[].class));
+
+      // (InternalContext) -> Object
+      apply =
+          MethodHandles.filterArguments(
+              apply, 0, InternalMethodHandles.buildObjectArrayFactory(parameters));
+      return apply;
+    }
   }
 
   /**
@@ -282,6 +381,90 @@ public abstract class ProviderMethod<T> extends InternalProviderInstanceBindingI
     @Override
     T doProvision(Object[] parameters) throws IllegalAccessException, InvocationTargetException {
       return (T) method.invoke(instance, parameters);
+    }
+
+    @Override
+    MethodHandle doProvisionHandle(MethodHandle[] parameters) {
+      // We can hit this case if
+      // 1. the method/class/parameters are non-public and we are using bytecode gen but a security
+      // manager or modules configuration are installed that blocks access to our fastclass
+      // generation and the setAccessible method.
+      // 2. The method has too many parameters to be supported by method handles (and fastclass also
+      // fails)
+      // So we fall back to reflection.
+      // You might be wondering... why is it that MethodHandles cannot handle methods with the
+      // maximum number of parameters but java reflection can? And yes it is true that java
+      // reflection is based on MethodHandles, but it supports a fallback for exactly this case that
+      // goes through a JVM native method... le sigh...
+      // bind to the `Method` object
+      // (Object, Object[]) -> Object
+      var handle = InternalMethodHandles.invokeHandle(method);
+      // insert the instance
+      // (Object[]) -> Object
+      handle = MethodHandles.insertArguments(handle, 0, instance);
+      // Pass the parameters
+      // (InternalContext)->Object
+      handle =
+          MethodHandles.filterArguments(
+              handle, 0, InternalMethodHandles.buildObjectArrayFactory(parameters));
+      return handle;
+    }
+  }
+
+  /**
+   * A {@link ProviderMethod} implementation that uses bytecode generation to invoke the provider
+   * method.
+   */
+  private static final class MethodHandleProviderMethod<T> extends ProviderMethod<T> {
+    private final MethodHandle providerMethod;
+
+    MethodHandleProviderMethod(
+        Key<T> key,
+        Method method,
+        Object instance,
+        ImmutableSet<Dependency<?>> dependencies,
+        Class<? extends Annotation> scopeAnnotation,
+        Annotation annotation,
+        MethodHandle providerMethod) {
+      super(key, method, instance, dependencies, scopeAnnotation, annotation);
+      if (!Modifier.isStatic(method.getModifiers())) {
+        providerMethod = providerMethod.bindTo(instance);
+      }
+      this.providerMethod = providerMethod;
+    }
+
+    @Override
+    MethodHandle doProvisionHandle(MethodHandle[] parameters) {
+      // Cast the parameters to the correct concrete type.
+      // Generally the parameters will already have the correct type, but there can be a mismatch
+      // if the target method has generic parameters, then the concrete type is Object (or perhaps
+      // some other type bound), but the parameters will be cast to the actual instantiated generic.
+      var methodType = providerMethod.type();
+      for (int i = 0; i < parameters.length; i++) {
+        parameters[i] = castReturnTo(parameters[i], methodType.parameterType(i));
+      }
+      // Pass the parameters to the provider method.
+      // The signature is now (...InternalContext)->T, one InternalContext per parameter.
+      var handle = MethodHandles.filterArguments(providerMethod, 0, parameters);
+      handle = castReturnToObject(handle);
+      // Merge all the internalcontext parameters into a single object factory returning the type of
+      // the method.
+      handle =
+          MethodHandles.permuteArguments(
+              handle, InternalMethodHandles.ELEMENT_FACTORY_TYPE, new int[parameters.length]);
+      return handle;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    T doProvision(Object[] parameters) throws InvocationTargetException {
+      // TODO: b/366058184: once all factories have been migrated to MethodHandles this should be
+      // unreachable.
+      try {
+        return (T) providerMethod.invokeWithArguments(parameters);
+      } catch (Throwable e) {
+        throw new InvocationTargetException(e); // match JDK reflection behaviour
+      }
     }
   }
 }

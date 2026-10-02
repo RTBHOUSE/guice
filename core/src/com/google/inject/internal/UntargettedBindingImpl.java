@@ -39,6 +39,11 @@ final class UntargettedBindingImpl<T> extends BindingImpl<T> implements Untarget
           public T get(InternalContext context, Dependency<?> dependency, boolean linked) {
             throw new AssertionError();
           }
+
+          @Override
+          MethodHandleResult makeHandle(LinkageContext context, boolean linked) {
+            throw new AssertionError();
+          }
         },
         Scoping.UNSCOPED);
   }

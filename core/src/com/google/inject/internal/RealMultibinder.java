@@ -1,14 +1,18 @@
 package com.google.inject.internal;
 
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.inject.internal.Element.Type.MULTIBINDER;
 import static com.google.inject.internal.Errors.checkConfiguration;
 import static com.google.inject.internal.Errors.checkNotNull;
+import static com.google.inject.internal.InternalMethodHandles.castReturnToObject;
 import static com.google.inject.name.Names.named;
+import static java.lang.invoke.MethodType.methodType;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
+import com.google.errorprone.annotations.Keep;
 import com.google.inject.AbstractModule;
 import com.google.inject.Binder;
 import com.google.inject.Binding;
@@ -27,11 +31,13 @@ import com.google.inject.spi.Message;
 import com.google.inject.spi.ProviderInstanceBinding;
 import com.google.inject.spi.ProviderWithExtensionVisitor;
 import com.google.inject.util.Types;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
-import java.util.function.Function;
 
 /**
  * The actual multibinder plays several roles:
@@ -53,7 +59,6 @@ public final class RealMultibinder<T> implements Module {
 
   /** Implementation of newSetBinder. */
   public static <T> RealMultibinder<T> newRealSetBinder(Binder binder, Key<T> key) {
-    binder = binder.skipSources(RealMultibinder.class);
     RealMultibinder<T> result = new RealMultibinder<>(binder, key);
     binder.install(result);
     return result;
@@ -74,12 +79,12 @@ public final class RealMultibinder<T> implements Module {
   }
 
   @SuppressWarnings("unchecked")
-  static <T> TypeLiteral<Collection<javax.inject.Provider<T>>> collectionOfJavaxProvidersOf(
+  static <T> TypeLiteral<Collection<jakarta.inject.Provider<T>>> collectionOfJakartaProvidersOf(
       TypeLiteral<T> elementType) {
     Type providerType =
-        Types.newParameterizedType(javax.inject.Provider.class, elementType.getType());
+        Types.newParameterizedType(jakarta.inject.Provider.class, elementType.getType());
     Type type = Types.collectionOf(providerType);
-    return (TypeLiteral<Collection<javax.inject.Provider<T>>>) TypeLiteral.get(type);
+    return (TypeLiteral<Collection<jakarta.inject.Provider<T>>>) TypeLiteral.get(type);
   }
 
   @SuppressWarnings("unchecked")
@@ -97,33 +102,27 @@ public final class RealMultibinder<T> implements Module {
     this.bindingSelection = new BindingSelection<>(key);
   }
 
+  @SuppressWarnings({"unchecked", "rawtypes"}) // we use raw Key to link bindings together.
   @Override
   public void configure(Binder binder) {
     checkConfiguration(!bindingSelection.isInitialized(), "Multibinder was already initialized");
 
-    RealMultibinderProvider<T> setProvider = new RealMultibinderProvider<T>(bindingSelection);
     // Bind the setKey to the provider wrapped w/ extension support.
     binder
         .bind(bindingSelection.getSetKey())
-        .toProvider(new ExtensionRealMultibinderProvider<>(setProvider));
-    // Bind the <? extends T> to the provider w/o extension support.
-    // It's important the exactly one binding implement the extension support and show
-    // the other keys as aliases, to adhere to the extension contract.
-    binder.bind(bindingSelection.getSetOfExtendsKey()).toProvider(setProvider);
+        .toProvider(new RealMultibinderProvider<>(bindingSelection));
+    binder.bind(bindingSelection.getSetOfExtendsKey()).to(bindingSelection.getSetKey());
 
-    Provider<Collection<Provider<T>>> collectionOfProvidersProvider =
-        new RealMultibinderCollectionOfProvidersProvider<T>(bindingSelection);
     binder
         .bind(bindingSelection.getCollectionOfProvidersKey())
-        .toProvider(collectionOfProvidersProvider);
+        .toProvider(new RealMultibinderCollectionOfProvidersProvider<T>(bindingSelection));
 
     // The collection this exposes is internally an ImmutableList, so it's OK to massage
-    // the guice Provider to javax Provider in the value (since the guice Provider implements
-    // javax Provider).
-    @SuppressWarnings("unchecked")
-    Provider<Collection<javax.inject.Provider<T>>> javaxProvider =
-        (Provider) collectionOfProvidersProvider;
-    binder.bind(bindingSelection.getCollectionOfJavaxProvidersKey()).toProvider(javaxProvider);
+    // the guice Provider to jakarta Provider in the value (since the guice Provider implements
+    // jakarta Provider).
+    binder
+        .bind(bindingSelection.getCollectionOfJakartaProvidersKey())
+        .to((Key) bindingSelection.getCollectionOfProvidersKey());
   }
 
   public void permitDuplicates() {
@@ -171,12 +170,10 @@ public final class RealMultibinder<T> implements Module {
    */
   private abstract static class BaseFactory<ValueT, ProvidedT>
       extends InternalProviderInstanceBindingImpl.Factory<ProvidedT> {
-    final Function<BindingSelection<ValueT>, ImmutableSet<Dependency<?>>> dependenciesFn;
     final BindingSelection<ValueT> bindingSelection;
+    private boolean initialized = false;
 
-    BaseFactory(
-        BindingSelection<ValueT> bindingSelection,
-        Function<BindingSelection<ValueT>, ImmutableSet<Dependency<?>>> dependenciesFn) {
+    BaseFactory(BindingSelection<ValueT> bindingSelection) {
       // While Multibinders only depend on bindings created in modules so we could theoretically
       // initialize eagerly, they also depend on
       // 1. findBindingsByType returning results
@@ -184,21 +181,32 @@ public final class RealMultibinder<T> implements Module {
       // neither of those is available during eager initialization, so we use DELAYED
       super(InitializationTiming.DELAYED);
       this.bindingSelection = bindingSelection;
-      this.dependenciesFn = dependenciesFn;
     }
 
     @Override
     void initialize(InjectorImpl injector, Errors errors) throws ErrorsException {
+      if (initialized) {
+        return;
+      }
       bindingSelection.initialize(injector, errors);
       doInitialize();
+      initialized = true;
     }
 
     abstract void doInitialize();
 
     @Override
-    public Set<Dependency<?>> getDependencies() {
-      return dependenciesFn.apply(bindingSelection);
+    public final Provider<ProvidedT> makeProvider(InjectorImpl injector, Dependency<?> dependency) {
+      // The !initialized case typically means that an error was reported during initialization
+      // so use a trivial implementation
+      if (initialized) {
+        return doMakeProvider(injector, dependency);
+      }
+      return super.makeProvider(injector, dependency);
     }
+
+    protected abstract Provider<ProvidedT> doMakeProvider(
+        InjectorImpl injector, Dependency<?> dependency);
 
     @Override
     public boolean equals(Object obj) {
@@ -217,14 +225,19 @@ public final class RealMultibinder<T> implements Module {
    * so it can be used to supply a {@code Set<T>} and {@code Set<? extends T>}, the latter being
    * useful for Kotlin support.
    */
-  private static final class RealMultibinderProvider<T> extends BaseFactory<T, Set<T>> {
+  private static final class RealMultibinderProvider<T> extends BaseFactory<T, Set<T>>
+      implements ProviderWithExtensionVisitor<Set<T>>, MultibinderBinding<Set<T>> {
     List<Binding<T>> bindings;
     SingleParameterInjector<T>[] injectors;
     boolean permitDuplicates;
 
     RealMultibinderProvider(BindingSelection<T> bindingSelection) {
-      // Note: method reference doesn't work for the 2nd arg for some reason when compiling on java8
-      super(bindingSelection, bs -> bs.getDependencies());
+      super(bindingSelection);
+    }
+
+    @Override
+    public ImmutableSet<Dependency<?>> getDependencies() {
+      return bindingSelection.getDependencies();
     }
 
     @Override
@@ -242,26 +255,152 @@ public final class RealMultibinder<T> implements Module {
         // if localInjectors == null, then we have no bindings so return the empty set.
         return ImmutableSet.of();
       }
-      // Ideally we would just add to an ImmutableSet.Builder, but if we did that and there were
-      // duplicates we wouldn't be able to tell which one was the duplicate.  So to manage this we
-      // first put everything into an array and then construct the set.  This way if something gets
-      // dropped we can figure out what it is.
+
+      // If duplicates aren't permitted, we need to capture the original values in order to show a
+      // meaningful error message to users (if duplicates were encountered).
       @SuppressWarnings("unchecked")
-      T[] values = (T[]) new Object[localInjectors.length];
+      T[] values = !permitDuplicates ? (T[]) new Object[localInjectors.length] : null;
+
+      // Avoid ImmutableSet.copyOf(T[]), because it assumes there'll be duplicates in the input, but
+      // in the usual case of permitDuplicates==false, we know the exact size must be
+      // `localInjector.length` (otherwise we fail).  This uses `builderWithExpectedSize` to avoid
+      // the overhead of copyOf or an unknown builder size. If permitDuplicates==true, this will
+      // assume a potentially larger size (but never a smaller size), and `build` will then reduce
+      // as necessary.
+      ImmutableSet.Builder<T> setBuilder =
+          ImmutableSet.<T>builderWithExpectedSize(localInjectors.length);
       for (int i = 0; i < localInjectors.length; i++) {
         SingleParameterInjector<T> parameterInjector = localInjectors[i];
         T newValue = parameterInjector.inject(context);
         if (newValue == null) {
           throw newNullEntryException(i);
         }
-        values[i] = newValue;
+        if (!permitDuplicates) {
+          values[i] = newValue;
+        }
+        setBuilder.add(newValue);
       }
-      ImmutableSet<T> set = ImmutableSet.copyOf(values);
+      ImmutableSet<T> set = setBuilder.build();
+
       // There are fewer items in the set than the array.  Figure out which one got dropped.
       if (!permitDuplicates && set.size() < values.length) {
         throw newDuplicateValuesException(values);
       }
       return set;
+    }
+
+    @Override
+    protected MethodHandle doGetHandle(LinkageContext context) {
+      if (injectors == null) {
+        return InternalMethodHandles.constantFactoryGetHandle(ImmutableSet.of());
+      }
+      // null check each element
+      List<MethodHandle> elementHandles = new ArrayList<>(injectors.length);
+      for (int i = 0; i < injectors.length; i++) {
+        var element = injectors[i].getInjectHandle(context);
+        elementHandles.add(
+            MethodHandles.filterReturnValue(
+                element,
+                MethodHandles.insertArguments(
+                    NULL_CHECK_RESULT_HANDLE, 1, bindings.get(i).getSource())));
+      }
+      // At size one permitDuplicates is irrelevant and we can bind to the SingletonImmutableSet
+      // class directly.
+      if (permitDuplicates || elementHandles.size() == 1) {
+        // we just want to construct an ImmutableSet.Builder, and add everything to it.
+        // This generates exactly the code a human would write.
+        return MethodHandles.dropArguments(
+            InternalMethodHandles.buildImmutableSetFactory(elementHandles), 1, Dependency.class);
+      } else {
+        // Duplicates are not permitted, so we need to check for duplicates by constructing all
+        // elements and then checking the size of the set.
+        // ()-> Object[]
+        var elements = InternalMethodHandles.buildObjectArrayFactory(elementHandles);
+        // (Object[]) -> ImmutableSet<T>
+        var collector = MAKE_IMMUTABLE_SET_AND_CHECK_DUPLICATES_HANDLE.bindTo(this);
+        // (InternalContext ctx) -> ImmutableSet<T>
+        collector = MethodHandles.filterArguments(collector, 0, elements);
+        // (InternalContext, Dependency) -> Object
+        return MethodHandles.dropArguments(castReturnToObject(collector), 1, Dependency.class);
+      }
+    }
+
+    /**
+     * Recursive helper to populate an array.
+     *
+     * <p>REturns a handle of type (Object[], InternalContext) -> void
+     */
+    static MethodHandle populateArray(
+        MethodHandle arrayElementSetter, int offset, List<MethodHandle> elementFactories) {
+      var size = elementFactories.size();
+      checkState(size != 0);
+      if (size < 32) {
+        var setter =
+            MethodHandles.filterArguments(
+                MethodHandles.insertArguments(arrayElementSetter, 1, offset),
+                1,
+                elementFactories.get(0));
+        for (int i = 1; i < size; i++) {
+          setter =
+              MethodHandles.foldArguments(
+                  MethodHandles.filterArguments(
+                      MethodHandles.insertArguments(arrayElementSetter, 1, offset + i),
+                      1,
+                      elementFactories.get(i)),
+                  setter);
+        }
+        return setter;
+      }
+      var left = elementFactories.subList(0, size / 2);
+      var right = elementFactories.subList(size / 2, size);
+      var leftHandle = populateArray(arrayElementSetter, offset, left);
+      var rightHandle = populateArray(arrayElementSetter, offset + left.size(), right);
+      return MethodHandles.foldArguments(rightHandle, leftHandle);
+    }
+
+    private static final MethodHandle MAKE_IMMUTABLE_SET_AND_CHECK_DUPLICATES_HANDLE =
+        InternalMethodHandles.findVirtualOrDie(
+            RealMultibinderProvider.class,
+            "makeImmutableSetAndCheckDuplicates",
+            methodType(ImmutableSet.class, Object[].class));
+
+    @Keep
+    ImmutableSet<T> makeImmutableSetAndCheckDuplicates(T[] elements)
+        throws InternalProvisionException {
+      // Avoid ImmutableSet.copyOf(T[]), because it assumes there'll be duplicates in the input, but
+      // in the usual case of permitDuplicates==false, we know the exact size must be
+      // `localInjector.length` (otherwise we fail).  This uses `builderWithExpectedSize` to avoid
+      // the overhead of copyOf or an unknown builder size.
+      var set = ImmutableSet.<T>builderWithExpectedSize(elements.length).add(elements).build();
+      if (set.size() < elements.length) {
+        throw newDuplicateValuesException(elements);
+      }
+      return set;
+    }
+
+    private static final MethodHandle NULL_CHECK_RESULT_HANDLE =
+        InternalMethodHandles.findStaticOrDie(
+            RealMultibinderProvider.class,
+            "nullCheckResult",
+            methodType(Object.class, Object.class, Object.class));
+
+    @Keep
+    static Object nullCheckResult(Object result, Object source) throws InternalProvisionException {
+      if (result == null) {
+        throw InternalProvisionException.create(
+            ErrorId.NULL_ELEMENT_IN_SET,
+            "Set injection failed due to null element bound at: %s",
+            source);
+      }
+      return result;
+    }
+
+    @Override
+    protected Provider<Set<T>> doMakeProvider(InjectorImpl injector, Dependency<?> dependency) {
+      if (injectors == null) {
+        return InternalFactory.makeProviderFor(ImmutableSet.of(), this);
+      }
+      return InternalFactory.makeDefaultProvider(this, injector, dependency);
     }
 
     private InternalProvisionException newNullEntryException(int i) {
@@ -279,32 +418,6 @@ public final class RealMultibinder<T> implements Module {
               new DuplicateElementError<T>(
                   bindingSelection.getSetKey(), bindings, values, ImmutableList.of(getSource())));
       return new InternalProvisionException(message);
-    }
-  }
-
-  /**
-   * Implementation of BaseFactory that exposes details about the multibinder through the extension
-   * SPI.
-   */
-  private static final class ExtensionRealMultibinderProvider<T> extends BaseFactory<T, Set<T>>
-      implements ProviderWithExtensionVisitor<Set<T>>, MultibinderBinding<Set<T>> {
-    final RealMultibinderProvider<T> delegate;
-
-    ExtensionRealMultibinderProvider(RealMultibinderProvider<T> delegate) {
-      // Note: method reference doesn't work for the 2nd arg for some reason when compiling on java8
-      super(delegate.bindingSelection, bs -> bs.getDependencies());
-      this.delegate = delegate;
-    }
-
-    @Override
-    protected void doInitialize() {
-      delegate.doInitialize();
-    }
-
-    @Override
-    protected ImmutableSet<T> doProvision(InternalContext context, Dependency<?> dependency)
-        throws InternalProvisionException {
-      return delegate.doProvision(context, dependency);
     }
 
     @SuppressWarnings("unchecked")
@@ -327,7 +440,7 @@ public final class RealMultibinder<T> implements Module {
     public ImmutableSet<Key<?>> getAlternateSetKeys() {
       return ImmutableSet.of(
           (Key<?>) bindingSelection.getCollectionOfProvidersKey(),
-          (Key<?>) bindingSelection.getCollectionOfJavaxProvidersKey(),
+          (Key<?>) bindingSelection.getCollectionOfJakartaProvidersKey(),
           (Key<?>) bindingSelection.getSetOfExtendsKey());
     }
 
@@ -360,8 +473,12 @@ public final class RealMultibinder<T> implements Module {
     ImmutableList<Provider<T>> providers;
 
     RealMultibinderCollectionOfProvidersProvider(BindingSelection<T> bindingSelection) {
-      // Note: method reference doesn't work for the 2nd arg for some reason when compiling on java8
-      super(bindingSelection, bs -> bs.getProviderDependencies());
+      super(bindingSelection);
+    }
+
+    @Override
+    public ImmutableSet<Dependency<?>> getDependencies() {
+      return bindingSelection.getProviderDependencies();
     }
 
     @Override
@@ -378,6 +495,17 @@ public final class RealMultibinder<T> implements Module {
         InternalContext context, Dependency<?> dependency) {
       return providers;
     }
+
+    @Override
+    protected Provider<Collection<Provider<T>>> doMakeProvider(
+        InjectorImpl injector, Dependency<?> dependency) {
+      return InternalFactory.makeProviderFor(providers, this);
+    }
+
+    @Override
+    protected MethodHandle doGetHandle(LinkageContext contex) {
+      return InternalMethodHandles.constantFactoryGetHandle(providers);
+    }
   }
 
   private static final class BindingSelection<T> {
@@ -391,7 +519,7 @@ public final class RealMultibinder<T> implements Module {
     // these are all lazily allocated
     private String setName;
     private Key<Collection<Provider<T>>> collectionOfProvidersKey;
-    private Key<Collection<javax.inject.Provider<T>>> collectionOfJavaxProvidersKey;
+    private Key<Collection<jakarta.inject.Provider<T>>> collectionOfJakartaProvidersKey;
     private Key<Set<? extends T>> setOfExtendsKey;
     private Key<Boolean> permitDuplicatesKey;
 
@@ -466,12 +594,12 @@ public final class RealMultibinder<T> implements Module {
     }
 
     ImmutableList<Binding<T>> getBindings() {
-      checkConfiguration(isInitialized, "not initialized");
+      checkConfiguration(isInitialized(), "not initialized");
       return bindings;
     }
 
     SingleParameterInjector<T>[] getParameterInjectors() {
-      checkConfiguration(isInitialized, "not initialized");
+      checkConfiguration(isInitialized(), "not initialized");
       return parameterinjectors;
     }
 
@@ -508,12 +636,12 @@ public final class RealMultibinder<T> implements Module {
       return local;
     }
 
-    Key<Collection<javax.inject.Provider<T>>> getCollectionOfJavaxProvidersKey() {
-      Key<Collection<javax.inject.Provider<T>>> local = collectionOfJavaxProvidersKey;
+    Key<Collection<jakarta.inject.Provider<T>>> getCollectionOfJakartaProvidersKey() {
+      Key<Collection<jakarta.inject.Provider<T>>> local = collectionOfJakartaProvidersKey;
       if (local == null) {
         local =
-            collectionOfJavaxProvidersKey =
-                setKey.ofType(collectionOfJavaxProvidersOf(elementType));
+            collectionOfJakartaProvidersKey =
+                setKey.ofType(collectionOfJakartaProvidersOf(elementType));
       }
       return local;
     }
@@ -565,7 +693,7 @@ public final class RealMultibinder<T> implements Module {
             || binding.getKey().equals(getPermitDuplicatesKey())
             || binding.getKey().equals(setKey)
             || binding.getKey().equals(collectionOfProvidersKey)
-            || binding.getKey().equals(collectionOfJavaxProvidersKey)
+            || binding.getKey().equals(collectionOfJakartaProvidersKey)
             || binding.getKey().equals(setOfExtendsKey);
       } else {
         return false;

@@ -6,7 +6,7 @@
   <parent>
     <groupId>com.google.inject.extensions</groupId>
     <artifactId>extensions-parent</artifactId>
-    <version>5.1.1-SNAPSHOT</version>
+    <version>7.0.1-SNAPSHOT</version>
   </parent>
 
   <artifactId>guice-assistedinject</artifactId>
@@ -32,6 +32,10 @@
     <dependency>
       <groupId>com.google.truth</groupId>
       <artifactId>truth</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.google.errorprone</groupId>
+      <artifactId>error_prone_annotations</artifactId>
     </dependency>
   </dependencies>
 

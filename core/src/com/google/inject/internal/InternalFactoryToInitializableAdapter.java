@@ -30,13 +30,15 @@ import com.google.inject.spi.ProviderInstanceBinding;
 final class InternalFactoryToInitializableAdapter<T> extends ProviderInternalFactory<T> {
 
   private final ProvisionListenerStackCallback<T> provisionCallback;
-  private final Initializable<? extends javax.inject.Provider<? extends T>> initializable;
+  private final Initializable<? extends jakarta.inject.Provider<? extends T>> initializable;
 
   public InternalFactoryToInitializableAdapter(
-      Initializable<? extends javax.inject.Provider<? extends T>> initializable,
+      Class<? super T> rawType,
+      Initializable<? extends jakarta.inject.Provider<? extends T>> initializable,
       Object source,
-      ProvisionListenerStackCallback<T> provisionCallback) {
-    super(source);
+      ProvisionListenerStackCallback<T> provisionCallback,
+      int circularFactoryId) {
+    super(rawType, source, circularFactoryId);
     this.provisionCallback = provisionCallback;
     this.initializable = checkNotNull(initializable, "provider");
   }
@@ -44,20 +46,14 @@ final class InternalFactoryToInitializableAdapter<T> extends ProviderInternalFac
   @Override
   public T get(InternalContext context, Dependency<?> dependency, boolean linked)
       throws InternalProvisionException {
-    return circularGet(initializable.get(), context, dependency, provisionCallback);
+    return circularGet(initializable.get(context), context, dependency, provisionCallback);
   }
 
   @Override
-  protected T provision(
-      javax.inject.Provider<? extends T> provider,
-      Dependency<?> dependency,
-      ConstructionContext<T> constructionContext)
-      throws InternalProvisionException {
-    try {
-      return super.provision(provider, dependency, constructionContext);
-    } catch (RuntimeException userException) {
-      throw InternalProvisionException.errorInProvider(userException).addSource(source);
-    }
+  MethodHandleResult makeHandle(LinkageContext context, boolean linked) {
+    return makeCachable(
+        circularGetHandle(
+            InternalMethodHandles.initializableFactoryGetHandle(initializable), provisionCallback));
   }
 
   @Override

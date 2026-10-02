@@ -107,12 +107,22 @@ public class SingletonScope implements Scope {
       volatile Object instance;
 
       /**
-       * Circular proxies are used when potential deadlocks are detected. Guarded by itself.
-       * ConstructionContext is not thread-safe, so each call should be synchronized.
+       * Circular proxies are used when potential deadlocks are detected. This lock is used to guard
+       * accesses to the list of invocation handlers.
        *
        * <p>Locking strategy: manipulations with proxies list or instance initialization.
        */
-      final ConstructionContext<T> constructionContext = new ConstructionContext<>();
+      final Object proxyCycleLock = new Object();
+
+      /**
+       * An invocation handler for circular proxies. Typically this is `null` as we don't allocate
+       * proxies, but when we do, we allocate a handler and pass it to each allocated proxy
+       *
+       * <p>TODO: lukes - We could instead store the actual proxy here and then reuse it instead of
+       * allocating a new one, and we can access the invocation handler via
+       * `Proxy.getInvocationHandler(proxy)`.
+       */
+      DelegatingInvocationHandler invocationHandler;
 
       /**
        * For each binding there is a separate lock that we hold during object creation.
@@ -131,7 +141,7 @@ public class SingletonScope implements Scope {
        * The singleton provider needs a reference back to the injector, in order to get ahold of
        * InternalContext during instantiation.
        */
-      final @Nullable InjectorImpl injector;
+      @Nullable final InjectorImpl injector;
 
       {
         // If we are getting called by Scoping
@@ -179,10 +189,13 @@ public class SingletonScope implements Scope {
                     return provided;
                   }
 
-                  synchronized (constructionContext) {
+                  synchronized (proxyCycleLock) {
                     // guarantee thread-safety for instance and proxies initialization
                     instance = providedNotNull;
-                    constructionContext.setProxyDelegates(provided);
+                    if (invocationHandler != null) {
+                      invocationHandler.setDelegate(provided);
+                      invocationHandler = null;
+                    }
                   }
                 } else {
                   // safety assert in case instance was initialized
@@ -191,13 +204,6 @@ public class SingletonScope implements Scope {
                       "Singleton is called recursively returning different results");
                 }
               }
-            } catch (RuntimeException e) {
-              // something went wrong, be sure to clean a construction context
-              // this helps to prevent potential memory leaks in circular proxies list
-              synchronized (constructionContext) {
-                constructionContext.finishConstruction();
-              }
-              throw e;
             } finally {
               // always release our creation lock, even on failures
               creationLock.unlock();
@@ -208,7 +214,7 @@ public class SingletonScope implements Scope {
                   ImmutableList.of(createCycleDependenciesMessage(locksCycle, null)));
             }
             // potential deadlock detected, creation lock is not taken by this thread
-            synchronized (constructionContext) {
+            synchronized (proxyCycleLock) {
               // guarantee thread-safety for instance and proxies initialization
               if (instance == null) {
                 // creating a proxy to satisfy circular dependency across several threads
@@ -218,9 +224,19 @@ public class SingletonScope implements Scope {
                 Class<?> rawType = dependency.getKey().getTypeLiteral().getRawType();
 
                 try {
+                  if (!context.areCircularProxiesEnabled()) {
+                    throw InternalProvisionException.circularDependenciesDisabled(rawType);
+                  }
+                  if (!rawType.isInterface()) {
+                    throw InternalProvisionException.cannotProxyClass(rawType);
+                  }
+
+                  if (invocationHandler == null) {
+                    invocationHandler = new DelegatingInvocationHandler();
+                  }
+
                   @SuppressWarnings("unchecked")
-                  T proxy =
-                      (T) constructionContext.createProxy(context.getInjectorOptions(), rawType);
+                  T proxy = (T) BytecodeGen.newCircularProxy(rawType, invocationHandler);
                   return proxy;
                 } catch (InternalProvisionException e) {
                   // best effort to create a rich error message
@@ -281,15 +297,15 @@ public class SingletonScope implements Scope {
         if (proxyCreationError != null) {
           fmt.format(" %s", proxyCreationError.getMessage());
         }
-        fmt.format("%n");
+        fmt.format("\n");
         for (Thread lockedThread : locksCycle.keySet()) {
           List<Key<?>> lockedKeys = locksCycle.get(lockedThread);
-          fmt.format("%s is holding locks the following singletons in the cycle:%n", lockedThread);
+          fmt.format("%s is holding locks the following singletons in the cycle:\n", lockedThread);
           for (Key<?> lockedKey : lockedKeys) {
-            fmt.format("%s%n", Errors.convert(lockedKey));
+            fmt.format("%s\n", Errors.convert(lockedKey));
           }
           for (StackTraceElement traceElement : lockedThread.getStackTrace()) {
-            fmt.format("\tat %s%n", traceElement);
+            fmt.format("\tat %s\n", traceElement);
           }
         }
         fmt.close();
