@@ -25,9 +25,21 @@ public interface KotlinSupportInterface {
    */
   Predicate<Integer> getIsParameterKotlinNullablePredicate(Method method);
 
-  /** Checks for any errors on the constructor's parameters's annotations. */
+  /** Checks for any errors on the constructor's parameters' annotations. */
   void checkConstructorParameterAnnotations(Constructor<?> constructor, Errors errors);
 
   /** Returns whether the {@code clazz} is a local Kotlin class. */
   boolean isLocalClass(Class<?> clazz);
+
+  /** Returns whether the {@code clazz} is a Kotlin value class. */
+  boolean isValueClass(Class<?> clazz);
+
+  /** Returns whether the {@code clazz} is a Kotlin class. */
+  boolean isKotlinClass(Class<?> clazz);
+
+  /**
+   * Returns a demangled StackTraceElement if it corresponds to an inlined Kotlin function,
+   * otherwise returns the original StackTraceElement.
+   */
+  StackTraceElement maybeDemangleSTE(StackTraceElement element, Class<?> clazz);
 }

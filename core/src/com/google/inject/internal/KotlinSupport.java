@@ -69,5 +69,20 @@ public final class KotlinSupport {
     public boolean isLocalClass(Class<?> clazz) {
       return false;
     }
+
+    @Override
+    public boolean isValueClass(Class<?> clazz) {
+      return false;
+    }
+
+    @Override
+    public boolean isKotlinClass(Class<?> clazz) {
+      return false;
+    }
+
+    @Override
+    public StackTraceElement maybeDemangleSTE(StackTraceElement element, Class<?> clazz) {
+      return element;
+    }
   }
 }

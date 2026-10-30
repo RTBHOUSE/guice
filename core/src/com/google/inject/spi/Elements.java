@@ -21,6 +21,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.inject.internal.InternalFlags.getIncludeStackTraceOption;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -46,6 +47,7 @@ import com.google.inject.internal.ConstantBindingBuilderImpl;
 import com.google.inject.internal.Errors;
 import com.google.inject.internal.ExposureBuilder;
 import com.google.inject.internal.GuiceInternal;
+import com.google.inject.internal.InternalClassesToSkipSources;
 import com.google.inject.internal.InternalFlags.IncludeStackTraceOption;
 import com.google.inject.internal.MoreTypes;
 import com.google.inject.internal.PrivateElementsImpl;
@@ -54,11 +56,16 @@ import com.google.inject.internal.ProviderMethodsModule;
 import com.google.inject.internal.util.SourceProvider;
 import com.google.inject.internal.util.StackTraceElements;
 import com.google.inject.matcher.Matcher;
+import com.google.inject.multibindings.MapBinder;
+import com.google.inject.multibindings.Multibinder;
+import com.google.inject.multibindings.OptionalBinder;
+import com.google.inject.util.Modules;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -115,6 +122,16 @@ public final class Elements {
     // Free the memory consumed by the stack trace elements cache
     StackTraceElements.clearCache();
     return Collections.unmodifiableList(binder.elements);
+  }
+
+  /** Returns a list of the top-level modules installed by the input {@code module}. */
+  public static List<Module> getInstalledModules(Stage stage, Module module) {
+    if (module.equals(Modules.EMPTY_MODULE)) {
+      return ImmutableList.of();
+    }
+    RecordTopLevelModulesBinder binder = new RecordTopLevelModulesBinder(stage);
+    binder.record(module);
+    return ImmutableList.copyOf(binder.topLevelModules);
   }
 
   // TODO(user): Consider moving the RecordingBinder to com.google.inject.internal and removing these
@@ -174,6 +191,25 @@ public final class Elements {
   }
 
   private static class RecordingBinder implements Binder, PrivateBinder {
+    private static final ImmutableSet<Class<?>> CLASSES_TO_SKIP =
+        ImmutableSet.<Class<?>>builder()
+            .add(
+                Elements.class,
+                RecordingBinder.class,
+                AbstractModule.class,
+                ConstantBindingBuilderImpl.class,
+                AbstractBindingBuilder.class,
+                BindingBuilder.class,
+                MapBinder.class,
+                Multibinder.class,
+                OptionalBinder.class)
+            .addAll(InternalClassesToSkipSources.classesToSkipSources())
+            .build();
+
+    private static final SourceProvider DEFAULT_SOURCE_PROVIDER =
+        SourceProvider.DEFAULT_INSTANCE.plusSkippedClasses(
+            CLASSES_TO_SKIP.toArray(new Class<?>[0]));
+
     private final Stage stage;
     private final Map<Module, ModuleInfo> modules;
     private final List<Element> elements;
@@ -190,7 +226,8 @@ public final class Elements {
     private final BindingSourceRestriction.PermitMapConstruction permitMapConstruction;
 
     /** The current modules stack */
-    private ModuleSource moduleSource = null;
+    protected ModuleSource moduleSource = null;
+
     /**
      * The current scanner.
      *
@@ -209,14 +246,7 @@ public final class Elements {
       this.scanners = Sets.newLinkedHashSet();
       this.elements = Lists.newArrayList();
       this.source = null;
-      this.sourceProvider =
-          SourceProvider.DEFAULT_INSTANCE.plusSkippedClasses(
-              Elements.class,
-              RecordingBinder.class,
-              AbstractModule.class,
-              ConstantBindingBuilderImpl.class,
-              AbstractBindingBuilder.class,
-              BindingBuilder.class);
+      this.sourceProvider = DEFAULT_SOURCE_PROVIDER;
       this.parent = null;
       this.privateElements = null;
       this.privateBindersForScanning = Lists.newArrayList();
@@ -528,14 +558,14 @@ public final class Elements {
       return source == this.source
           ? this
           : new RecordingBinder(
-              this, source, /* sourceProvider = */ null, /* trustedSource = */ false);
+              this, source, /* sourceProvider= */ null, /* trustedSource= */ false);
     }
 
     public RecordingBinder withTrustedSource(final Object source) {
       return source == this.source
           ? this
           : new RecordingBinder(
-              this, source, /* sourceProvider = */ null, /* trustedSource = */ true);
+              this, source, /* sourceProvider= */ null, /* trustedSource= */ true);
     }
 
     @Override
@@ -547,7 +577,7 @@ public final class Elements {
 
       SourceProvider newSourceProvider = sourceProvider.plusSkippedClasses(classesToSkip);
       return new RecordingBinder(
-          this, /* source = */ null, newSourceProvider, /* trustedSource = */ false);
+          this, /* source= */ null, newSourceProvider, /* trustedSource= */ false);
     }
 
     @Override
@@ -631,7 +661,7 @@ public final class Elements {
       return builder;
     }
 
-    private ModuleSource getModuleSource(Class<?> module) {
+    protected ModuleSource getModuleSource(Class<?> module) {
       if (moduleSource == null) {
         return new ModuleSource(module, permitMapConstruction.getPermitMap());
       }
@@ -679,6 +709,31 @@ public final class Elements {
     @Override
     public String toString() {
       return "Binder";
+    }
+  }
+
+  /** Records top-level modules installed by a parent module. */
+  private static class RecordTopLevelModulesBinder extends RecordingBinder {
+
+    private final LinkedHashSet<Module> topLevelModules = new LinkedHashSet<>();
+
+    RecordTopLevelModulesBinder(Stage stage) {
+      super(stage);
+    }
+
+    private void record(Module module) {
+      // Prepare a moduleSource for bind(..) calls in this module,
+      // which require a moduleSource. The result of the bind(..)
+      // calls are thrown away, but they still need to be processed
+      // to discover any of the install(..) calls.
+      moduleSource = getModuleSource(module.getClass());
+      module.configure(this);
+    }
+
+    @Override
+    public void install(Module module) {
+      // Only record the module, but do not install it.
+      topLevelModules.add(module);
     }
   }
 }

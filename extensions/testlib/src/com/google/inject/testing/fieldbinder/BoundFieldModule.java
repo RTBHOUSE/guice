@@ -64,11 +64,10 @@ import java.lang.reflect.Type;
  *   <li>If {@link Bind#lazy} is true, this module will delay reading the value from the field until
  *       injection time, allowing the field's value to be reassigned during the course of a test's
  *       execution.
- *   <li>If a {@link BindingAnnotation} or {@link javax.inject.Qualifier} is present on the field,
- *       that field will be bound using that annotation via {@link
- *       AnnotatedBindingBuilder#annotatedWith}. For example, {@code
- *       bind(Foo.class).annotatedWith(BarAnnotation.class).toInstance(theValue)}. It is an error to
- *       supply more than one {@link BindingAnnotation} or {@link javax.inject.Qualifier}.
+ *   <li>If a {@link BindingAnnotation} or {@link Qualifier} is present on the field, that field
+ *       will be bound using that annotation via {@link AnnotatedBindingBuilder#annotatedWith}. For
+ *       example, {@code bind(Foo.class).annotatedWith(BarAnnotation.class).toInstance(theValue)}.
+ *       It is an error to supply more than one {@link BindingAnnotation} or {@link Qualifier}.
  *   <li>If the field is of type {@link Provider}, the field's value will be bound as a {@link
  *       Provider} using {@link LinkedBindingBuilder#toProvider} to the provider's parameterized
  *       type. For example, {@code Provider<Integer>} binds to {@link Integer}. Attempting to bind a
@@ -364,7 +363,7 @@ public final class BoundFieldModule implements Module {
     }
   }
 
-  /** Returns the the object originally passed to {@link BoundFieldModule#of}). */
+  /** Returns the object originally passed to {@link BoundFieldModule#of}). */
   public Object getInstance() {
     return instance;
   }
@@ -433,8 +432,8 @@ public final class BoundFieldModule implements Module {
   }
 
   private static boolean hasInject(Field field) {
-    return field.isAnnotationPresent(javax.inject.Inject.class)
-        || field.isAnnotationPresent(com.google.inject.Inject.class);
+    return field.isAnnotationPresent(com.google.inject.Inject.class)
+        || field.isAnnotationPresent(jakarta.inject.Inject.class);
   }
 
   /**
@@ -444,9 +443,8 @@ public final class BoundFieldModule implements Module {
    * this check, try using {@code @Bind(lazy=true) MyType myField} and lazily assign myField
    * instead.
    *
-   * <p>A transparent provider is a {@link com.google.inject.Provider} or {@link
-   * javax.inject.Provider} which binds to it's parameterized type when used as the argument to
-   * {@link Binder#bind}.
+   * <p>A transparent provider is a {@link Provider} which binds to it's parameterized type when
+   * used as the argument to {@link Binder#bind}.
    *
    * <p>A {@link Provider} is transparent if the base class of that object is {@link Provider}. In
    * other words, subclasses of {@link Provider} are not transparent. As a special case, if a {@link
@@ -457,7 +455,8 @@ public final class BoundFieldModule implements Module {
    * bind those subclasses directly, enabling them to inject the providers themselves.
    */
   private static boolean isTransparentProvider(Class<?> clazz) {
-    return com.google.inject.Provider.class == clazz || javax.inject.Provider.class == clazz;
+    return com.google.inject.Provider.class == clazz
+        || jakarta.inject.Provider.class == clazz;
   }
 
   private static void bindField(Binder binder, final BoundFieldInfo fieldInfo) {
@@ -480,15 +479,13 @@ public final class BoundFieldModule implements Module {
               @Override
               // @Nullable
               public Object get() {
-                javax.inject.Provider<?> provider =
-                    (javax.inject.Provider<?>) getFieldValue(fieldInfo);
-                return provider.get();
+                Object val = getFieldValue(fieldInfo);
+                return ((jakarta.inject.Provider<?>) val).get();
               }
             });
       } else {
-        javax.inject.Provider<?> fieldValueUnsafe =
-            (javax.inject.Provider<?>) getFieldValue(fieldInfo);
-        binderUnsafe.toProvider(fieldValueUnsafe);
+        Object val = getFieldValue(fieldInfo);
+        binderUnsafe.toProvider((jakarta.inject.Provider<?>) val);
       }
     } else if (fieldInfo.bindAnnotation.lazy()) {
       binderUnsafe.toProvider(

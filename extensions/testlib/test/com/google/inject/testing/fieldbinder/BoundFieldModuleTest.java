@@ -41,7 +41,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.util.Arrays;
 import java.util.List;
-import javax.inject.Qualifier;
+import jakarta.inject.Qualifier;
 import junit.framework.TestCase;
 
 /** Unit tests for {@link BoundFieldModule}. */
@@ -238,24 +238,25 @@ public class BoundFieldModuleTest extends TestCase {
         testValue2, injector.getInstance(Key.get(Integer.class, SomeBindingAnnotation.class)));
   }
 
-  @Qualifier
+  @jakarta.inject.Qualifier
   @Retention(RUNTIME)
-  private static @interface SomeQualifier {}
+  private static @interface SomeJakartaQualifier {}
 
-  public void testBindingWithQualifier() {
+  public void testBindingWithJakartaQualifier() {
     final Integer testValue1 = 1024, testValue2 = 2048;
     Object instance =
         new Object() {
           @Bind private Integer anInt = testValue1;
 
-          @Bind @SomeQualifier private Integer anotherInt = testValue2;
+          @Bind @SomeJakartaQualifier private Integer anotherInt = testValue2;
         };
 
     BoundFieldModule module = BoundFieldModule.of(instance);
     Injector injector = Guice.createInjector(module);
 
     assertEquals(testValue1, injector.getInstance(Integer.class));
-    assertEquals(testValue2, injector.getInstance(Key.get(Integer.class, SomeQualifier.class)));
+    assertEquals(
+        testValue2, injector.getInstance(Key.get(Integer.class, SomeJakartaQualifier.class)));
   }
 
   public void testCanReuseBindingAnnotationsWithDifferentValues() {
@@ -421,13 +422,13 @@ public class BoundFieldModuleTest extends TestCase {
     assertEquals(testValue, injector.getInstance(Integer.class));
   }
 
-  public void testBindingJavaxProvider() {
+  public void testBindingJakartaProvider() {
     final Integer testValue = 1024;
     Object instance =
         new Object() {
           @Bind
-          private javax.inject.Provider<Integer> anInt =
-              new javax.inject.Provider<Integer>() {
+          private jakarta.inject.Provider<Integer> anInt =
+              new jakarta.inject.Provider<Integer>() {
                 @Override
                 public Integer get() {
                   return testValue;
@@ -667,8 +668,8 @@ public class BoundFieldModuleTest extends TestCase {
     assertEquals(testValue, injector.getInstance(Integer.class));
   }
 
-  @SuppressWarnings("rawtypes") // Testing rawtypes
-  public void testRawProviderCanBindToIncorrectType() {
+  @SuppressWarnings({"rawtypes", "JUnitIncompatibleType"}) // Testing rawtypes
+  public void testRawProviderCannotBindToIncorrectType() {
     final Integer testValue = 1024;
     Object instance =
         new Object() {
@@ -685,7 +686,12 @@ public class BoundFieldModuleTest extends TestCase {
     BoundFieldModule module = BoundFieldModule.of(instance);
     Injector injector = Guice.createInjector(module);
 
-    assertEquals(testValue, injector.getInstance(String.class));
+    try {
+      injector.getInstance(String.class);
+      fail();
+    } catch (ProvisionException e) {
+      assertEquals(e.getCause().getClass(), ClassCastException.class);
+    }
   }
 
   public void testMultipleBindErrorsAreAggregated() {
@@ -1009,20 +1015,20 @@ public class BoundFieldModuleTest extends TestCase {
   public void testGetBoundFields_getKey() throws Exception {
     Object instance =
         new Object() {
-          @Bind @SomeQualifier String value = "default";
+          @Bind @SomeBindingAnnotation String value = "default";
         };
     BoundFieldModule module = BoundFieldModule.of(instance);
     Guice.createInjector(module);
     BoundFieldInfo info = Iterables.getOnlyElement(module.getBoundFields());
 
-    assertEquals(Key.get(String.class, SomeQualifier.class), info.getBoundKey());
+    assertEquals(Key.get(String.class, SomeBindingAnnotation.class), info.getBoundKey());
   }
 
   public void testGetBoundFields_getBindAnnotation() throws Exception {
     Object instance =
         new Object() {
           @Bind(lazy = true)
-          @SomeQualifier
+          @SomeBindingAnnotation
           String value;
         };
     BoundFieldModule module = BoundFieldModule.of(instance);

@@ -29,8 +29,6 @@ import dagger.multibindings.IntoSet;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Set;
-import javax.inject.Qualifier;
-import javax.inject.Singleton;
 import junit.framework.TestCase;
 
 /** Tests of {@link Binds} support in {@link DaggerAdapter}. */
@@ -98,10 +96,10 @@ public class BindsTest extends TestCase {
   }
 
   @Module
-  interface ScopedMultibindingBindsModule {
+  interface JakartaScopedMultibindingBindsModule {
     @Binds
     @IntoSet
-    @Singleton
+    @jakarta.inject.Singleton
     Object fromString(String string);
 
     @Binds
@@ -109,15 +107,16 @@ public class BindsTest extends TestCase {
 
     @Binds
     @IntoSet
-    @Singleton
+    @jakarta.inject.Singleton
     Object fromCharSequence(CharSequence charSequence);
   }
 
-  public void testScopedMultibindings() {
+  public void testJakartaScopedMultibindings() {
     Injector injector =
         Guice.createInjector(
             DaggerAdapter.from(
-                new CountingMultibindingProviderModule(), ScopedMultibindingBindsModule.class));
+                new CountingMultibindingProviderModule(),
+                JakartaScopedMultibindingBindsModule.class));
 
     Binding<Set<Object>> binding = injector.getBinding(new Key<Set<Object>>() {});
     assertThat(binding)
@@ -129,39 +128,41 @@ public class BindsTest extends TestCase {
   }
 
   @Retention(RetentionPolicy.RUNTIME)
-  @Qualifier
-  @interface ProvidesQualifier {}
+  @jakarta.inject.Qualifier
+  @interface JakartaProvidesQualifier {}
 
   @Retention(RetentionPolicy.RUNTIME)
-  @Qualifier
-  @interface BindsQualifier {}
+  @jakarta.inject.Qualifier
+  @interface JakartaBindsQualifier {}
 
   @Module
-  interface QualifiedBinds {
+  interface JakartaQualifiedBinds {
     @Provides
-    @ProvidesQualifier
+    @JakartaProvidesQualifier
     static String provides() {
-      return "qualifiers";
+      return "jakarta qualified!";
     }
 
     @Binds
-    @BindsQualifier
-    String bindsToProvides(@ProvidesQualifier String provides);
+    @JakartaBindsQualifier
+    String bindsToProvides(@JakartaProvidesQualifier String provides);
 
     @Binds
-    String unqualifiedToBinds(@BindsQualifier String binds);
+    String unqualifiedToBinds(@JakartaBindsQualifier String binds);
   }
 
-  public void testQualifiers() {
-    Injector injector = Guice.createInjector(DaggerAdapter.from(QualifiedBinds.class));
+  public void testJakartaQualifiers() {
+    Injector injector = Guice.createInjector(DaggerAdapter.from(JakartaQualifiedBinds.class));
 
     Binding<String> stringBinding = injector.getBinding(String.class);
-    assertThat(stringBinding).hasProvidedValueThat().isEqualTo("qualifiers");
-    assertThat(stringBinding).hasSource(QualifiedBinds.class, "unqualifiedToBinds", String.class);
+    assertThat(stringBinding).hasProvidedValueThat().isEqualTo("jakarta qualified!");
+    assertThat(stringBinding)
+        .hasSource(JakartaQualifiedBinds.class, "unqualifiedToBinds", String.class);
 
     Binding<String> qualifiedBinds =
-        injector.getBinding(Key.get(String.class, BindsQualifier.class));
-    assertThat(qualifiedBinds).hasProvidedValueThat().isEqualTo("qualifiers");
-    assertThat(qualifiedBinds).hasSource(QualifiedBinds.class, "bindsToProvides", String.class);
+        injector.getBinding(Key.get(String.class, JakartaBindsQualifier.class));
+    assertThat(qualifiedBinds).hasProvidedValueThat().isEqualTo("jakarta qualified!");
+    assertThat(qualifiedBinds)
+        .hasSource(JakartaQualifiedBinds.class, "bindsToProvides", String.class);
   }
 }

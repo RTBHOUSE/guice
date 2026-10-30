@@ -39,7 +39,7 @@ import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.net.URLClassLoader;
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 import org.aopalliance.intercept.MethodInterceptor;
 import org.aopalliance.intercept.MethodInvocation;
 import org.junit.Before;
@@ -155,7 +155,9 @@ public class BytecodeGenTest {
         // standard bootdelegation of java.*
         return super.loadClass(name, resolve);
 
-      } else if (!name.contains(".internal.")) {
+      } else if (!name.contains(".internal.") || name.contains("InternalFlags")) {
+        // Note: the !!contains(InternalFlags) shouldn't be necessary,
+        // but Bazel 7.1.1 w/ JDK11 seems to have a weird classloader that causes issues w/o it.
 
         /*
          * load public and test classes directly from the classpath - we don't
@@ -185,6 +187,7 @@ public class BytecodeGenTest {
   private Module testModule;
 
   @Before
+  @SuppressWarnings("unchecked")
   public void setUp() throws Exception {
     assumeTrue(InternalFlags.isBytecodeGenEnabled());
 
@@ -213,7 +216,7 @@ public class BytecodeGenTest {
   public static class ProxyTestImpl implements ProxyTest {
 
     static {
-      //System.out.println(ProxyTestImpl.class.getClassLoader());
+      // System.out.println(ProxyTestImpl.class.getClassLoader());
     }
 
     @Override
@@ -360,8 +363,10 @@ public class BytecodeGenTest {
   // This tests for a situation where an osgi bundle contains a different version of guice.
   @Test
   public void testFastClassWithDifferentVersionsOfGuice() throws Throwable {
-    // Test relies on package access which CHILD loading doesn't have
-    if (InternalFlags.getCustomClassLoadingOption() == CustomClassLoadingOption.CHILD) {
+    // Test relies on package access which CHILD loading doesn't have and the methodhandle path
+    // doesn't use fastclasses
+    if (InternalFlags.getCustomClassLoadingOption() == CustomClassLoadingOption.CHILD
+        || InternalFlags.getUseMethodHandlesOption()) {
       return;
     }
     Injector injector = Guice.createInjector();
@@ -422,10 +427,9 @@ public class BytecodeGenTest {
       }
 
       if (name.startsWith("java.")
-          || name.startsWith("javax.")
+          || name.startsWith("jakarta.")
           || name.equals(LogCreator.class.getName())
-          || (!name.startsWith("com.google.inject.")
-              && !name.startsWith("com.googlecode.guice"))) {
+          || (!name.startsWith("com.google.inject.") && !name.startsWith("com.googlecode.guice"))) {
 
         // standard parent delegation
         return super.loadClass(name, resolve);

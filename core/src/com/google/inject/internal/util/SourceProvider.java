@@ -19,6 +19,7 @@ package com.google.inject.internal.util;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
+import com.google.inject.internal.KotlinSupport;
 import java.util.List;
 
 /**
@@ -81,7 +82,8 @@ public final class SourceProvider {
    * is not skipped.
    */
   public StackTraceElement getCaller() {
-    return FINDER.findCaller(this::shouldBeSkipped);
+    CallerFinder.Caller caller = FINDER.findCaller(this::shouldBeSkipped);
+    return KotlinSupport.getInstance().maybeDemangleSTE(caller.element, caller.clazz);
   }
 
   /** Returns the non-skipped module class name. */
@@ -96,6 +98,6 @@ public final class SourceProvider {
   }
 
   private static CallerFinder loadCallerFinder() {
-    return new NewThrowableFinder();
+    return new DirectStackWalkerFinder();
   }
 }

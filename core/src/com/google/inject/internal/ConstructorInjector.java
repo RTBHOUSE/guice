@@ -16,10 +16,15 @@
 
 package com.google.inject.internal;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.collect.ImmutableSet;
+import com.google.inject.internal.MembersInjectorImpl.MethodHandleMembersInjectorImpl;
 import com.google.inject.internal.ProvisionListenerStackCallback.ProvisionCallback;
 import com.google.inject.spi.Dependency;
 import com.google.inject.spi.InjectionPoint;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Set;
 import javax.annotation.Nullable;
@@ -30,22 +35,26 @@ import javax.annotation.Nullable;
  *
  * @author crazybob@google.com (Bob Lee)
  */
-final class ConstructorInjector<T> {
+final class ConstructorInjector<T> implements ProvisionCallback<T> {
 
   private final ImmutableSet<InjectionPoint> injectableMembers;
   private final SingleParameterInjector<?>[] parameterInjectors;
   private final ConstructionProxy<T> constructionProxy;
-  private final MembersInjectorImpl<T> membersInjector;
+  @Nullable private final MembersInjectorImpl<T> membersInjector;
+  private final int circularFactoryId;
 
   ConstructorInjector(
       Set<InjectionPoint> injectableMembers,
       ConstructionProxy<T> constructionProxy,
       SingleParameterInjector<?>[] parameterInjectors,
-      MembersInjectorImpl<T> membersInjector) {
+      @Nullable MembersInjectorImpl<T> membersInjector,
+      int circularFactoryId) {
     this.injectableMembers = ImmutableSet.copyOf(injectableMembers);
     this.constructionProxy = constructionProxy;
     this.parameterInjectors = parameterInjectors;
-    this.membersInjector = membersInjector;
+    this.membersInjector =
+        membersInjector == null || membersInjector.isEmpty() ? null : membersInjector;
+    this.circularFactoryId = circularFactoryId;
   }
 
   public ImmutableSet<InjectionPoint> getInjectableMembers() {
@@ -65,64 +74,101 @@ final class ConstructorInjector<T> {
       Dependency<?> dependency,
       @Nullable ProvisionListenerStackCallback<T> provisionCallback)
       throws InternalProvisionException {
-    final ConstructionContext<T> constructionContext = context.getConstructionContext(this);
-    // We have a circular reference between constructors. Return a proxy.
-    if (constructionContext.isConstructing()) {
-      // TODO (user): if we can't proxy this object, can we proxy the other object?
-      return constructionContext.createProxy(
-          context.getInjectorOptions(), dependency.getKey().getTypeLiteral().getRawType());
+    @SuppressWarnings("unchecked")
+    T result = (T) context.tryStartConstruction(circularFactoryId, dependency);
+    if (result != null) {
+      // We have a circular reference between bindings. Return a proxy.
+      return result;
     }
 
-    // If we're re-entering this factory while injecting fields or methods,
-    // return the same instance. This prevents infinite loops.
-    T t = constructionContext.getCurrentReference();
-    if (t != null) {
-      if (context.getInjectorOptions().disableCircularProxies) {
-        throw InternalProvisionException.circularDependenciesDisabled(
-            dependency.getKey().getTypeLiteral().getRawType());
-      }
-      return t;
-    }
-
-    constructionContext.startConstruction();
-    try {
-      // Optimization: Don't go through the callback stack if we have no listeners.
-      if (provisionCallback == null) {
-        return provision(context, constructionContext);
-      } else {
-        return provisionCallback.provision(
-            context,
-            new ProvisionCallback<T>() {
-              @Override
-              public T call() throws InternalProvisionException {
-                return provision(context, constructionContext);
-              }
-            });
-      }
-    } finally {
-      constructionContext.finishConstruction();
+    // Optimization: Don't go through the callback stack if we have no listeners.
+    if (provisionCallback == null) {
+      return provision(context);
+    } else {
+      // NOTE: `provision` always calls the callback, even if provision listeners
+      // throw exceptions.
+      return provisionCallback.provision(context, dependency, this);
     }
   }
 
-  /** Provisions a new T. */
-  private T provision(InternalContext context, ConstructionContext<T> constructionContext)
+  /**
+   * Returns a method handle for constructing the instance with the signature {@code
+   * (InternalContext, Dependency<?>) -> T}
+   */
+  MethodHandle getConstructHandle(
+      LinkageContext linkageContext,
+      @Nullable ProvisionListenerStackCallback<T> provisionCallback) {
+
+    var handle =
+        constructionProxy.getConstructHandle(
+            SingleParameterInjector.getAllHandles(linkageContext, parameterInjectors));
+    checkState(
+        handle.type().equals(InternalMethodHandles.ELEMENT_FACTORY_TYPE),
+        "expected %s but got %s",
+        InternalMethodHandles.FACTORY_TYPE,
+        handle.type());
+    // If there are members injectors  we call `finishConstructionAndSetReference` so that
+    // cycle detection can find the newly constructed reference.
+    if (membersInjector != null) {
+      handle = InternalMethodHandles.finishConstructionAndSetReference(handle, circularFactoryId);
+      // Members injectors have the signature `(Object, InternalContext)->void`
+      var membersHandle =
+          ((MethodHandleMembersInjectorImpl<?>) membersInjector)
+              .getInjectMembersAndNotifyListenersHandle(linkageContext);
+      // Compose it into a handle that just returns the first parameter.
+      membersHandle =
+          MethodHandles.foldArguments(
+              MethodHandles.dropArguments(
+                  MethodHandles.identity(Object.class), 1, InternalContext.class),
+              membersHandle);
+      // Then execute the membersHandle after constructing the object (and calling
+      // finishConstructionAndSetReference)
+      handle = MethodHandles.foldArguments(membersHandle, handle);
+    } else {
+      // Otherwise we are done!
+      handle = InternalMethodHandles.finishConstruction(handle, circularFactoryId);
+    }
+
+    if (membersInjector != null) {
+      // If we called finishConstructionAndSetReference, we need to clear the reference here.
+      handle = InternalMethodHandles.clearReference(handle, circularFactoryId);
+    }
+
+    // Wrap the whole thing in a provision callback if needed.
+    handle = MethodHandles.dropArguments(handle, 1, Dependency.class);
+    handle = InternalMethodHandles.invokeThroughProvisionCallback(handle, provisionCallback);
+    // call tryStartConstruction
+    handle = InternalMethodHandles.tryStartConstruction(handle, circularFactoryId);
+    // (InternalContext)->T
+    return handle;
+  }
+
+  // Implements ProvisionCallback<T>
+  @Override
+  public final T call(InternalContext context, Dependency<?> dependency)
       throws InternalProvisionException {
+    return provision(context);
+  }
+
+  /** Provisions a new T. */
+  private T provision(InternalContext context) throws InternalProvisionException {
+    MembersInjectorImpl<T> localMembersInjector = membersInjector;
     try {
-      T t;
+      T t = null;
       try {
         Object[] parameters = SingleParameterInjector.getAll(context, parameterInjectors);
         t = constructionProxy.newInstance(parameters);
-        constructionContext.setProxyDelegates(t);
       } finally {
-        constructionContext.finishConstruction();
+        if (localMembersInjector == null) {
+          context.finishConstruction(circularFactoryId, t);
+        } else {
+          context.finishConstructionAndSetReference(circularFactoryId, t);
+        }
       }
 
-      // Store reference. If an injector re-enters this factory, they'll get the same reference.
-      constructionContext.setCurrentReference(t);
-
-      MembersInjectorImpl<T> localMembersInjector = membersInjector;
-      localMembersInjector.injectMembers(t, context, false);
-      localMembersInjector.notifyListeners(t);
+      if (localMembersInjector != null) {
+        localMembersInjector.injectMembers(t, context);
+      }
 
       return t;
     } catch (InvocationTargetException userException) {
@@ -130,7 +176,9 @@ final class ConstructorInjector<T> {
       throw InternalProvisionException.errorInjectingConstructor(cause)
           .addSource(constructionProxy.getInjectionPoint());
     } finally {
-      constructionContext.removeCurrentReference();
+      if (localMembersInjector != null) {
+        context.clearCurrentReference(circularFactoryId);
+      }
     }
   }
 }

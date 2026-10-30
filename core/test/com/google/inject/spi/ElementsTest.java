@@ -17,6 +17,7 @@
 package com.google.inject.spi;
 
 import static com.google.common.collect.Iterables.getOnlyElement;
+import static com.google.common.truth.Truth.assertThat;
 import static com.google.inject.Asserts.assertContains;
 import static com.google.inject.Asserts.getDeclaringSourcePart;
 import static java.lang.annotation.RetentionPolicy.RUNTIME;
@@ -380,17 +381,17 @@ public class ElementsTest extends TestCase {
           }
         };
 
-    final javax.inject.Provider<Integer> intJavaxProvider =
-        new javax.inject.Provider<Integer>() {
+    final jakarta.inject.Provider<Integer> intSpecProvider =
+        new jakarta.inject.Provider<Integer>() {
           @Override
           public Integer get() {
             return 42;
           }
         };
 
-    final javax.inject.Provider<Double> doubleJavaxProvider =
-        new javax.inject.Provider<Double>() {
-          @javax.inject.Inject String string;
+    final jakarta.inject.Provider<Double> doubleSpecProvider =
+        new jakarta.inject.Provider<Double>() {
+          @jakarta.inject.Inject String string;
 
           @Override
           public Double get() {
@@ -403,8 +404,8 @@ public class ElementsTest extends TestCase {
           @Override
           protected void configure() {
             bind(String.class).toProvider(aProvider);
-            bind(Integer.class).toProvider(intJavaxProvider);
-            bind(Double.class).toProvider(doubleJavaxProvider);
+            bind(Integer.class).toProvider(intSpecProvider);
+            bind(Double.class).toProvider(doubleSpecProvider);
             bind(List.class).toProvider(ListProvider.class);
             bind(Collection.class).toProvider(Key.get(ListProvider.class));
             bind(Iterable.class).toProvider(new TypeLiteral<TProvider<List<Object>>>() {});
@@ -436,7 +437,7 @@ public class ElementsTest extends TestCase {
                 new FailingTargetVisitor<T>() {
                   @Override
                   public Void visit(ProviderInstanceBinding<? extends T> binding) {
-                    assertSame(intJavaxProvider, binding.getUserSuppliedProvider());
+                    assertSame(intSpecProvider, binding.getUserSuppliedProvider());
                     assertEquals(42, binding.getProviderInstance().get());
                     // we don't wrap this w/ dependencies if there were none.
                     assertFalse(binding.getProviderInstance() instanceof HasDependencies);
@@ -455,7 +456,7 @@ public class ElementsTest extends TestCase {
                 new FailingTargetVisitor<T>() {
                   @Override
                   public Void visit(ProviderInstanceBinding<? extends T> binding) {
-                    assertSame(doubleJavaxProvider, binding.getUserSuppliedProvider());
+                    assertSame(doubleSpecProvider, binding.getUserSuppliedProvider());
                     assertEquals(42.42, binding.getProviderInstance().get());
                     // we do wrap it with dependencies if there were some.
                     assertTrue(binding.getProviderInstance() instanceof HasDependencies);
@@ -1349,6 +1350,50 @@ public class ElementsTest extends TestCase {
     assertEquals(1, aConfigureCount.get());
   }
 
+  public void testGetInstalledModules() {
+    final Module a =
+        new AbstractModule() {
+          @Override
+          public void configure() {
+            bind(List.class).to(ArrayList.class);
+          }
+        };
+    final Module b =
+        new AbstractModule() {
+          @Override
+          protected void configure() {
+            install(a);
+          }
+        };
+    List<Module> bInstalledModules = Elements.getInstalledModules(Stage.DEVELOPMENT, b);
+    assertThat(bInstalledModules).containsExactly(a);
+
+    final Module c =
+        new AbstractModule() {
+          @Override
+          protected void configure() {
+            // Does nothing
+          }
+        };
+    final Module d =
+        new AbstractModule() {
+          @Override
+          protected void configure() {
+            install(b);
+            install(c);
+          }
+        };
+    List<Module> dInstalledModules = Elements.getInstalledModules(Stage.DEVELOPMENT, d);
+    assertThat(dInstalledModules).containsExactly(b, c).inOrder();
+  }
+
+  public void testGetInstalledModulesWhenModuleInstallsItself() {
+    final Module m = new TestModule(true);
+    List<Module> installedModules = Elements.getInstalledModules(Stage.DEVELOPMENT, m);
+    assertThat(installedModules).hasSize(1);
+    assertThat(installedModules.get(0)).isInstanceOf(TestModule.class);
+  }
+
   /** Ensures the module performs the commands consistent with {@code visitors}. */
   protected void checkModule(Module module, ElementVisitor<?>... visitors) {
     List<Element> elements = Elements.getElements(module);
@@ -1418,5 +1463,21 @@ public class ElementsTest extends TestCase {
     String a;
 
     C(@Named("bar") @SampleAnnotation Integer b) {}
+  }
+
+  private class TestModule extends AbstractModule {
+    private final boolean installSelf;
+
+    TestModule(boolean installSelf) {
+      this.installSelf = installSelf;
+    }
+
+    @Override
+    protected void configure() {
+      if (installSelf) {
+        bind(List.class).to(ArrayList.class);
+        install(new TestModule(false));
+      }
+    }
   }
 }

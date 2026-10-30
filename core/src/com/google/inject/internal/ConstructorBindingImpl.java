@@ -20,6 +20,7 @@ import static com.google.common.base.Preconditions.checkState;
 import static com.google.inject.internal.Annotations.findScopeAnnotation;
 import static com.google.inject.internal.GuiceInternal.GUICE_INTERNAL;
 import static com.google.inject.spi.Elements.withTrustedSource;
+import static java.lang.invoke.MethodType.methodType;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
@@ -34,6 +35,8 @@ import com.google.inject.spi.ConstructorBinding;
 import com.google.inject.spi.Dependency;
 import com.google.inject.spi.InjectionPoint;
 import java.lang.annotation.Annotation;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -73,7 +76,12 @@ final class ConstructorBindingImpl<T> extends BindingImpl<T>
         new DefaultConstructionProxyFactory<T>(constructorInjectionPoint).create();
     this.constructorInjectionPoint = constructorInjectionPoint;
     factory.constructorInjector =
-        new ConstructorInjector<T>(injectionPoints, constructionProxy, null, null);
+        new ConstructorInjector<T>(
+            injectionPoints,
+            constructionProxy,
+            null,
+            null,
+            /* circularFactoryId= */ InternalContext.CircularFactoryIdFactory.INVALID_ID);
   }
 
   /**
@@ -271,7 +279,7 @@ final class ConstructorBindingImpl<T> extends BindingImpl<T>
     return Objects.hashCode(getKey(), getScoping(), constructorInjectionPoint);
   }
 
-  private static class Factory<T> implements InternalFactory<T> {
+  private static class Factory<T> extends InternalFactory<T> {
     private final boolean failIfNotLinked;
     private final Key<?> key;
     private ConstructorInjector<T> constructorInjector;
@@ -299,5 +307,28 @@ final class ConstructorBindingImpl<T> extends BindingImpl<T>
       // client needs), but it should be OK in practice thanks to the wonders of erasure.
       return (T) localInjector.construct(context, dependency, provisionCallback);
     }
+
+    @Override
+    MethodHandleResult makeHandle(LinkageContext context, boolean linked) {
+      if (!linked && failIfNotLinked) {
+        var throwHandle =
+            MethodHandles.foldArguments(
+                MethodHandles.throwException(Object.class, InternalProvisionException.class),
+                MethodHandles.insertArguments(JIT_DISABLED_HANDLE, 0, key));
+        return makeCachableOnLinkedSetting(
+            MethodHandles.dropArguments(throwHandle, 0, InternalContext.class, Dependency.class));
+      }
+      var handle = constructorInjector.getConstructHandle(context, provisionCallback);
+      if (failIfNotLinked) {
+        return makeCachableOnLinkedSetting(handle);
+      }
+      return makeCachable(handle);
+    }
+
+    private static final MethodHandle JIT_DISABLED_HANDLE =
+        InternalMethodHandles.findStaticOrDie(
+            InternalProvisionException.class,
+            "jitDisabled",
+            methodType(InternalProvisionException.class, Key.class));
   }
 }

@@ -16,11 +16,15 @@
 
 package com.google.inject.internal;
 
+import static java.lang.invoke.MethodType.methodType;
+
+import com.google.errorprone.annotations.Keep;
 import com.google.inject.Key;
-import com.google.inject.ProvidedBy;
 import com.google.inject.internal.InjectorImpl.JitLimitation;
 import com.google.inject.spi.Dependency;
-import javax.inject.Provider;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import jakarta.inject.Provider;
 
 /**
  * An {@link InternalFactory} for {@literal @}{@link ProvidedBy} bindings.
@@ -29,18 +33,17 @@ import javax.inject.Provider;
  */
 class ProvidedByInternalFactory<T> extends ProviderInternalFactory<T> implements DelayedInitialize {
 
-  private final Class<?> rawType;
   private final Class<? extends Provider<?>> providerType;
   private final Key<? extends Provider<T>> providerKey;
-  private BindingImpl<? extends Provider<T>> providerBinding;
+  private InternalFactory<? extends Provider<T>> providerFactory;
   private ProvisionListenerStackCallback<T> provisionCallback;
 
   ProvidedByInternalFactory(
       Class<?> rawType,
       Class<? extends Provider<?>> providerType,
-      Key<? extends Provider<T>> providerKey) {
-    super(providerKey);
-    this.rawType = rawType;
+      Key<? extends Provider<T>> providerKey,
+      int circularFactoryId) {
+    super(rawType, providerKey, circularFactoryId);
     this.providerType = providerType;
     this.providerKey = providerKey;
   }
@@ -51,43 +54,72 @@ class ProvidedByInternalFactory<T> extends ProviderInternalFactory<T> implements
 
   @Override
   public void initialize(InjectorImpl injector, Errors errors) throws ErrorsException {
-    providerBinding =
-        injector.getBindingOrThrow(providerKey, errors, JitLimitation.NEW_OR_EXISTING_JIT);
+    providerFactory =
+        injector.getInternalFactory(providerKey, errors, JitLimitation.NEW_OR_EXISTING_JIT);
   }
 
   @Override
   public T get(InternalContext context, Dependency<?> dependency, boolean linked)
       throws InternalProvisionException {
-    BindingImpl<? extends Provider<T>> localProviderBinding = providerBinding;
-    if (localProviderBinding == null) {
+    InternalFactory<? extends Provider<T>> localProviderFactory = providerFactory;
+    if (localProviderFactory == null) {
       throw new IllegalStateException("not initialized");
     }
-    Key<? extends Provider<T>> localProviderKey = providerKey;
     try {
-      Provider<? extends T> provider =
-          localProviderBinding.getInternalFactory().get(context, dependency, true);
+      // TODO: lukes - Is this the right 'dependency' to pass?
+      Provider<? extends T> provider = localProviderFactory.get(context, dependency, true);
       return circularGet(provider, context, dependency, provisionCallback);
     } catch (InternalProvisionException ipe) {
-      throw ipe.addSource(localProviderKey);
+      throw ipe.addSource(providerKey);
     }
   }
 
   @Override
-  protected T provision(
-      javax.inject.Provider<? extends T> provider,
-      Dependency<?> dependency,
-      ConstructionContext<T> constructionContext)
+  MethodHandleResult makeHandle(LinkageContext context, boolean linked) {
+    return makeCachable(
+        InternalMethodHandles.catchInternalProvisionExceptionAndRethrowWithSource(
+            circularGetHandle(
+                providerFactory.getHandle(context, /* linked= */ true), provisionCallback),
+            providerKey));
+  }
+
+  @Override
+  protected MethodHandle validateReturnTypeHandle(MethodHandle providerHandle) {
+    return MethodHandles.filterReturnValue(
+        providerHandle,
+        MethodHandles.insertArguments(
+            CHECK_SUBTYPE_NOT_PROVIDED_MH, 1, source, providerType, providedRawType));
+  }
+
+  private static final MethodHandle CHECK_SUBTYPE_NOT_PROVIDED_MH =
+      InternalMethodHandles.findStaticOrDie(
+          ProvidedByInternalFactory.class,
+          "doCheckSubtypeNotProvided",
+          methodType(Object.class, Object.class, Object.class, Class.class, Class.class));
+
+  // Historically this had a different error check than other providers,
+  // so we preserve that behavior.
+  @Keep
+  static Object doCheckSubtypeNotProvided(
+      Object result,
+      Object source,
+      Class<? extends jakarta.inject.Provider<?>> providerType,
+      Class<?> providedType)
       throws InternalProvisionException {
-    try {
-      Object o = super.provision(provider, dependency, constructionContext);
-      if (o != null && !rawType.isInstance(o)) {
-        throw InternalProvisionException.subtypeNotProvided(providerType, rawType);
-      }
-      @SuppressWarnings("unchecked") // protected by isInstance() check above
-      T t = (T) o;
-      return t;
-    } catch (RuntimeException e) {
-      throw InternalProvisionException.errorInProvider(e).addSource(source);
+    if (result != null && !providedType.isInstance(result)) {
+      throw InternalProvisionException.subtypeNotProvided(providerType, providedType)
+          .addSource(source);
+    }
+    return result;
+  }
+
+  // Historically this had a different error check than other providers,
+  // so we preserve that behavior.
+  @Override
+  protected void validateReturnType(T t) throws InternalProvisionException {
+    if (t != null && !providedRawType.isInstance(t)) {
+      throw InternalProvisionException.subtypeNotProvided(providerType, providedRawType)
+          .addSource(source);
     }
   }
 }

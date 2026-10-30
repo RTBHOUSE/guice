@@ -71,7 +71,7 @@ public final class ClassDefining {
       return new ChildClassDefiner(); // second choice unless forbidden
     } else {
       logger.warning(CLASS_DEFINING_UNSUPPORTED);
-      return (hostClass, bytecode) -> {
+      return (host, bytes) -> {
         throw new UnsupportedOperationException(
             "Cannot define class, " + CLASS_DEFINING_UNSUPPORTED);
       };

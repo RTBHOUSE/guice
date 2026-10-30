@@ -17,9 +17,11 @@
 package com.google.inject.internal;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.collect.MoreCollectors.onlyElement;
+import static com.google.common.truth.Truth.assertThat;
 import static com.google.inject.Asserts.assertContains;
-import static com.google.inject.internal.RealMultibinder.collectionOfJavaxProvidersOf;
+import static com.google.inject.internal.RealMultibinder.collectionOfJakartaProvidersOf;
 import static com.google.inject.internal.SpiUtils.VisitType.BOTH;
 import static com.google.inject.internal.SpiUtils.VisitType.MODULE;
 import static com.google.inject.internal.SpiUtils.assertSetVisitor;
@@ -82,9 +84,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.stream.IntStream;
 import junit.framework.TestCase;
 
-/** @author jessewilson@google.com (Jesse Wilson) */
+/**
+ * @author jessewilson@google.com (Jesse Wilson)
+ */
 public class MultibinderTest extends TestCase {
 
   final TypeLiteral<Optional<String>> optionalOfString = new TypeLiteral<Optional<String>>() {};
@@ -1286,8 +1291,8 @@ public class MultibinderTest extends TestCase {
                 mb1.addBinding().toInstance(1);
                 mb2.addBinding().toInstance(2);
 
-                // This assures us that the two binders are equivalent, so we expect the instance added to
-                // each to have been added to one set.
+                // This assures us that the two binders are equivalent, so we expect the instance
+                // added to each to have been added to one set.
                 assertEquals(mb1, mb2);
               }
             });
@@ -1417,9 +1422,9 @@ public class MultibinderTest extends TestCase {
         injector.getInstance(Key.get(collectionOfProvidersOfStrings));
     assertEquals(expectedValues, collectValues(providers));
 
-    Collection<javax.inject.Provider<String>> javaxProviders =
-        injector.getInstance(Key.get(collectionOfJavaxProvidersOf(stringType)));
-    assertEquals(expectedValues, collectValues(javaxProviders));
+    Collection<jakarta.inject.Provider<String>> jakartaProviders =
+        injector.getInstance(Key.get(collectionOfJakartaProvidersOf(stringType)));
+    assertEquals(expectedValues, collectValuesJakarta(jakartaProviders));
   }
 
   public void testMultibinderCanInjectCollectionOfProvidersWithAnnotation() {
@@ -1444,9 +1449,9 @@ public class MultibinderTest extends TestCase {
     Collection<String> values = collectValues(providers);
     assertEquals(expectedValues, values);
 
-    Collection<javax.inject.Provider<String>> javaxProviders =
-        injector.getInstance(Key.get(collectionOfJavaxProvidersOf(stringType), ann));
-    assertEquals(expectedValues, collectValues(javaxProviders));
+    Collection<jakarta.inject.Provider<String>> jakartaProviders =
+        injector.getInstance(Key.get(collectionOfJakartaProvidersOf(stringType), ann));
+    assertEquals(expectedValues, collectValuesJakarta(jakartaProviders));
   }
 
   public void testMultibindingProviderDependencies() {
@@ -1610,10 +1615,50 @@ public class MultibinderTest extends TestCase {
     }
   }
 
-  private <T> Collection<T> collectValues(
-      Collection<? extends javax.inject.Provider<T>> providers) {
+  // In the methodhandle implementation we need to ensure we don't create methods with too many
+  // parameters.
+
+  public void testLargeMultibinder() {
+    for (boolean permmitDuplicates : new boolean[] {true, false}) {
+      // Test a size larger than the number of method parameters.
+      // Sizes up to 100K work fine but are too slow.
+      final int size = 100_000;
+      Injector injector =
+          Guice.createInjector(
+              new AbstractModule() {
+                @Override
+                protected void configure() {
+                  Multibinder<String> multibinder =
+                      Multibinder.newSetBinder(binder(), String.class);
+                  if (permmitDuplicates) {
+                    multibinder = multibinder.permitDuplicates();
+                  }
+                  for (int i = 0; i < size; i++) {
+                    multibinder.addBinding().toInstance("" + i);
+                  }
+                }
+              });
+      Set<String> set = injector.getInstance(new Key<Set<String>>() {});
+      assertThat(set)
+          .isEqualTo(
+              IntStream.range(0, size)
+                  .mapToObj(i -> Integer.toString(i))
+                  .collect(toImmutableSet()));
+    }
+  }
+
+  private <T> Collection<T> collectValues(Collection<? extends Provider<T>> providers) {
     Collection<T> values = Lists.newArrayList();
-    for (javax.inject.Provider<T> provider : providers) {
+    for (Provider<T> provider : providers) {
+      values.add(provider.get());
+    }
+    return values;
+  }
+
+  private <T> Collection<T> collectValuesJakarta(
+      Collection<? extends jakarta.inject.Provider<T>> providers) {
+    Collection<T> values = Lists.newArrayList();
+    for (jakarta.inject.Provider<T> provider : providers) {
       values.add(provider.get());
     }
     return values;
